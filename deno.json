@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "dev": "deno run --watch main.ts"
+  },
+  "imports": {
+    "@langchain/community": "npm:@langchain/community@^1.0.0",
+    "@std/assert": "jsr:@std/assert@1"
+  }
+}

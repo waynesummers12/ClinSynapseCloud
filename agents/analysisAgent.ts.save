@@ -1,0 +1,134 @@
+// agents/analysisAgent.ts
+// Enhanced lab report parser and interpreter using OpenAI API
+
+import OpenAI from "https://deno.land/x/openai@v4.24.1/mod.ts";
+
+// --- PDF text extraction helper ---
+async function extractTextFromPDF(filePath: string): Promise<string> {
+  const data = await Deno.readFile(filePath);
+  const decoder = new TextDecoder("utf-8");
+  try {
+    const text = decoder.decode(data);
+    // If it looks like binary, placeholder fallback
+    if (text.includes("%PDF")) {
+      return "Extracted raw PDF content (text extraction pending).";
+    }
+    return text;
+  } catch {
+    return "Could not decode PDF as text.";
+  }
+}
+
+// --- Main Analysis Function ---
+export async function analyzeLabText(filePath: string) {
+  console.log("🔍 Analyzing lab report with ClinSynapse...");
+
+  const pdfText = await extractTextFromPDF(filePath);
+
+  const openai = new OpenAI({
+    apiKey: Deno.env.get("OPENAI_API_KEY"),
+  });
+
+  const prompt = `
+You are ClinSynapse, a clinical AI specializing in lab result interpretation.
+Summarize this lab report in clear language and highlight key abnormalities.
+
+Lab Report Text:
+${pdfText}
+
+Return a JSON object with the following fields:
+{
+  "summary": "brief readable summary for patient",
+  "key_values": {"Test": "Value and interpretation"},
+  "clinical_advice": "next steps, follow-up, or lifestyle recommendations"
+}
+`;
+
+  const response = await openai.responses.create({
+    model: "gpt-4o-mini",
+    input: prompt,
+  });
+
+  const output = response.output_text || "No output from AI model.";
+
+  return {
+    success: true,
+    model: "ClinSynapse GPT-4o-mini",
+    output,
+  };
+}
+// agents/analysisAgent.ts
+// Enhanced lab report parser and interpreter using OpenAI API
+
+import OpenAI from "https://deno.land/x/openai@v4.24.1/mod.ts";
+
+// --- PDF text extraction helper ---
+async function extractTextFromPDF(filePath: string): Promise<string> {
+  const data = await Deno.readFile(filePath);
+  const decoder = new TextDecoder("utf-8");
+  try {
+    const text = decoder.decode(data);
+    // If it looks like binary, placeholder fallback
+    if (text.includes("%PDF")) {
+      return "Extracted raw PDF content (text extraction pending).";
+    }
+    return text;
+  } catch {
+    return "Could not decode PDF as text.";
+  }
+}
+
+// --- Main Analysis Function ---
+export async function analyzeLabText(filePath: string) {
+  console.log("🔍 Analyzing lab report with ClinSynapse...");
+
+  const pdfText = await extractTextFromPDF(filePath);
+
+  const openai = new OpenAI({
+    apiKey: Deno.env.get("OPENAI_API_KEY"),
+  });
+
+  const prompt = `
+You are ClinSynapse, a clinical AI specializing in lab result interpretation.
+Summarize this lab report in clear language and highlight key abnormalities.
+
+Lab Report Text:
+${pdfText}
+
+Return a JSON object with the following fields:
+{
+  "summary": "brief readable summary for patient",
+  "key_values": {"Test": "Value and interpretation"},
+  "clinical_advice": "next steps, follow-up, or lifestyle recommendations"
+}
+`;
+
+  const response = await openai.responses.create({
+    model: "gpt-4o-mini",
+    input: prompt,
+  });
+
+  const output = response.output_text || "No output from AI model.";
+
+  return {
+    success: true,
+    model: "ClinSynapse GPT-4o-mini",
+    output,
+  };
+}
+// agents/analysisAgent.ts
+// Basic placeholder for lab report parsing (text or PDF extraction to come later)
+
+export async function analyzeLabText(fileData: string) {
+  console.log("Analyzing lab report...");
+
+  // Simple mock: summarize text length and sample content
+  const snippet = fileData.slice(0, 300).replace(/\s+/g, " ");
+  
+  return {
+    summary: `File processed successfully. Found ${fileData.length} characters.`,
+    snippet,
+    notes: "Replace this function later with actual lab result extraction and interpretation logic.",
+  };
+}
+
