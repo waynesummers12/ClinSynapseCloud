@@ -598,10 +598,11 @@ const LAB_DICTIONARY_FOR_PROMPT = LAB_ENTRIES.map((e) => ({
 async function extractTextWithEdenAI(filePath: string): Promise<string> {
   const pdfBytes = await Deno.readFile(filePath);
 
-  const form = new FormData();
-  form.append("providers", "google,microsoft,amazon");
-  form.append("fallback_providers", "google,microsoft,amazon");
-  form.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "lab.pdf");
+const form = new FormData();
+form.append("providers", "google");  // MUST be one provider only
+form.append("fallback_providers", "microsoft,amazon");  
+form.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "lab.pdf");
+
 
   const res = await fetch("https://api.edenai.run/v2/ocr/ocr", {
     method: "POST",
