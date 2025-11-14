@@ -5,6 +5,7 @@ import { analyzeLabReport } from "../agents/analysisAgent.ts";
 console.log("🚀 ClinSynapse server starting...");
 console.log("✅ Upload endpoint ready on http://localhost:8080/upload");
 
+// Start server
 serve(async (req) => {
   const url = new URL(req.url);
 
@@ -13,21 +14,28 @@ serve(async (req) => {
       const formData = await req.formData();
       const file = formData.get("file");
 
-      if (!file || typeof file === "string") {
+      if (!file || typeof file !== "string") {
         console.error("❌ No file received in upload request.");
         return new Response("No file uploaded.", { status: 400 });
       }
 
-      // Save uploaded file to safe temporary path
+      // -------------------------
+      // Save uploaded file
+      // -------------------------
       const tempFilePath = `/tmp/${crypto.randomUUID()}-${file.name}`;
       const fileBytes = new Uint8Array(await file.arrayBuffer());
+
       await Deno.writeFile(tempFilePath, fileBytes);
-      console.log(`📄 File saved to: ${tempFilePath}`);
+      console.log(`📁 File saved to: ${tempFilePath}`);
 
-      // 🔥 FIXED: Use the correct function name
-      const { extractedText, ...result } = await analyzeLabReport(tempFilePath);
+      // -------------------------
+      // Main Analyzer Call
+      // -------------------------
+      const { extractedText, result } = await analyzeLabReport(tempFilePath);
 
-      // --- Logging ---
+      // -------------------------
+      // Logging output JSON file
+      // -------------------------
       try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         const logPath = `${Deno.env.get("HOME")}/ClinSynapse/logs/${timestamp}_result.json`;
@@ -40,37 +48,30 @@ serve(async (req) => {
               uploadedFile: tempFilePath,
               extractedText: extractedText || "No text extracted.",
               result,
+              usedOCR: result?.usedOCR || false,
             },
             null,
-            2,
-          ),
+            2
+          )
         );
 
-        console.log(`🧾 Log saved to ${logPath}`);
-      } catch (logError) {
-        console.error("⚠️ Failed to write log:", logError);
+        console.log(`📝 Log written to: ${logPath}`);
+      } catch (logErr) {
+        console.error("⚠️ Failed to write log file:", logErr);
       }
 
-      console.log("✅ Analysis complete.");
-
-      return new Response(JSON.stringify(result, null, 2), {
+      // Return result to client
+      return new Response(JSON.stringify(result), {
+        status: 200,
         headers: { "Content-Type": "application/json" },
       });
-
-    } catch (error) {
-      console.error("🔥 Server error:", error);
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: error.message,
-          stack: error.stack,
-        }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
-      );
+    } catch (err) {
+      console.error("❌ Upload handler error:", err);
+      return new Response("Internal Server Error", { status: 500 });
     }
   }
 
-  return new Response("ClinSynapse server is running.", { status: 200 });
+  return new Response("ClinSynapseCloud server online.", { status: 200 });
 });
 
 
