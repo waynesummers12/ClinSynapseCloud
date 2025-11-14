@@ -592,24 +592,16 @@ const LAB_DICTIONARY_FOR_PROMPT = LAB_ENTRIES.map((e) => ({
   refText: e.refText,
 }));
 
-// ============================================================
-// OCR using EdenAI (Primary Text Extraction)
-// ============================================================
-
+// -------------------------------------------------------------
+// OCR using EdenAI (supports any PDF format)
+// -------------------------------------------------------------
 async function extractTextWithEdenAI(filePath: string): Promise<string> {
   const pdfBytes = await Deno.readFile(filePath);
 
   const form = new FormData();
-
-  // EdenAI rule: ONE provider + optional fallback_providers
-  form.append("providers", "google");
-  form.append("fallback_providers", "microsoft,amazon,abbyy");
-
-  form.append(
-    "file",
-    new Blob([pdfBytes], { type: "application/pdf" }),
-    "lab.pdf",
-  );
+  form.append("providers", "google,microsoft,amazon");
+  form.append("fallback_providers", "google,microsoft,amazon");
+  form.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "lab.pdf");
 
   const res = await fetch("https://api.edenai.run/v2/ocr/ocr", {
     method: "POST",
@@ -618,27 +610,72 @@ async function extractTextWithEdenAI(filePath: string): Promise<string> {
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    console.error("❌ EdenAI OCR error:", errText);
+    const err = await res.text();
+    console.error("❌ EdenAI OCR error:", err);
     throw new Error("EdenAI OCR failed");
   }
 
   const data = await res.json();
 
   let merged = "";
-
   for (const provider in data) {
-    const txt =
-      data[provider]?.text ||
-      data[provider]?.raw_text ||
-      data[provider]?.full_text ||
-      "";
-    if (txt) merged += txt + "\n";
+    if (data[provider]?.text) merged += data[provider].text + "\n";
   }
 
-  const cleaned = merged.trim();
-  console.log("🔍 OCR Extracted (first 300 chars):", cleaned.slice(0, 300));
-  return cleaned;
+  return merged.trim();
+}
+
+// ============================================================
+// SMART LAB PARSER (multi-column, OCR-noise tolerant)
+// ============================================================
+
+function smartExtractLabValues(text: string): Array<{
+  rawName: string;
+  value: number | string | null;
+  units: string | null;
+  rawLine: string;
+}> {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+
+  const results: Array<{
+    rawName: string;
+    value: number | string | null;
+    units: string | null;
+    rawLine: string;
+  }> = [];
+
+  const valueRegex =
+    /(-?\d+(?:[.,]\d+)?)(?:\s*(mg\/dL|mmol\/L|pg\/mL|ng\/mL|µIU\/mL|uIU\/mL|U\/L|%|g\/dL|fL|mmol|mEq\/L|×10\^3\/µL|×10\^6\/µL))?/i;
+
+  for (const rawLine of lines) {
+    const parts = rawLine.split(/\s{2,}|\t/); // multi-column split
+
+    for (const part of parts) {
+      const m = part.match(valueRegex);
+      if (!m) continue;
+
+      // Normalize decimal comma
+      let val = m[1].replace(",", ".");
+      let numVal = parseFloat(val);
+      if (isNaN(numVal)) numVal = null;
+
+      const units = m[2] || null;
+
+      const nameGuess = part.split(m[1])[0].trim() ||
+        rawLine.split(m[1])[0].trim();
+
+      if (!nameGuess) continue;
+
+      results.push({
+        rawName: nameGuess,
+        value: numVal,
+        units,
+        rawLine
+      });
+    }
+  }
+
+  return results;
 }
 
 // ============================================================
