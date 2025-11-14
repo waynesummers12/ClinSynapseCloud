@@ -1,12 +1,12 @@
-// server/http.ts
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { analyzeLabReport } from "../agents/analysisAgent.ts";
 
-// Read PORT from Render environment (required!)
-const PORT = Deno.env.get("PORT") ?? "8080";
+// 🟢 REQUIRED FOR RENDER — Use PORT env variable or fallback for local
+const PORT = Number(Deno.env.get("PORT") ?? 8080);
 
-console.log("🧠 ClinSynapse server starting...");
-console.log(`✅ Upload endpoint ready on http://localhost:${PORT}/upload`);
+console.log(`🚀 ClinSynapseCloud server starting...`);
+console.log(`📨 Binding server to 0.0.0.0:${PORT}`);
+console.log(`📤 Upload endpoint will be ready at http://0.0.0.0:${PORT}/upload`);
 
 serve(
   async (req) => {
@@ -18,67 +18,44 @@ serve(
         const file = formData.get("file");
 
         if (!file || typeof file !== "object") {
-          console.error("❌ No file received in upload request.");
           return new Response("No file uploaded.", { status: 400 });
         }
 
-        // Save uploaded file to temp path
+        // Save file to temp
         const tempFilePath = `/tmp/${crypto.randomUUID()}-${file.name}`;
-        const fileBytes = new Uint8Array(await file.arrayBuffer());
-        await Deno.writeFile(tempFilePath, fileBytes);
-        console.log(`📄 File saved to: ${tempFilePath}`);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await Deno.writeFile(tempFilePath, bytes);
 
-        // Run analysis
+        console.log(`📁 File saved to temp: ${tempFilePath}`);
+
+        // Run analyzer
         const { extractedText, result, usedOCR } =
           await analyzeLabReport(tempFilePath);
 
-        // Logging
-        try {
-          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          const logPath = `${Deno.env.get("HOME")}/ClinSynapse/logs/${timestamp}_result.json`;
-
-          await Deno.writeTextFile(
-            logPath,
-            JSON.stringify(
-              {
-                timestamp,
-                uploadedFile: tempFilePath,
-                extractedText: extractedText || "No text extracted",
-                result,
-                usedOCR,
-              },
-              null,
-              2,
-            ),
-          );
-
-          console.log(`📝 Analysis logged → ${logPath}`);
-        } catch (logErr) {
-          console.error("⚠️ Failed to write log file:", logErr);
-        }
-
-        // Return results to Bubble
         return new Response(
-          JSON.stringify(
-            {
-              success: true,
-              extractedText,
-              result,
-              usedOCR,
-            },
-          ),
-          { headers: { "content-type": "application/json" } },
+          JSON.stringify({
+            success: true,
+            extractedText,
+            result,
+            usedOCR,
+          }),
+          { headers: { "content-type": "application/json" } }
         );
       } catch (err) {
-        console.error("❌ Upload handler error:", err);
+        console.error("❌ Upload handler failed:", err);
         return new Response("Internal server error", { status: 500 });
       }
     }
 
     return new Response("ClinSynapseCloud API", { status: 200 });
   },
-  { port: Number(PORT) },
+  {
+    // 🟢 THIS FIXES RENDER PORT BUG
+    port: PORT,
+    hostname: "0.0.0.0",
+  }
 );
+
 
 
 
