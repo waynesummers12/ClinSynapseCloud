@@ -1,12 +1,12 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { analyzeLabReport } from "../agents/analysisAgent.ts";
 
-// 🟢 REQUIRED FOR RENDER — Use PORT env variable or fallback for local
-const PORT = Number(Deno.env.get("PORT") ?? 8080);
+// REQUIRED FOR RENDER — Use their injected PORT
+const PORT = Number(Deno.env.get("PORT")) || 8080;
 
-console.log(`🚀 ClinSynapseCloud server starting...`);
-console.log(`📨 Binding server to 0.0.0.0:${PORT}`);
-console.log(`📤 Upload endpoint will be ready at http://0.0.0.0:${PORT}/upload`);
+console.log("🚀 ClinSynapse server starting...");
+console.log(`🌐 Binding server to 0.0.0.0:${PORT}`);
+console.log(`📤 Upload endpoint ready at http://0.0.0.0:${PORT}/upload`);
 
 serve(
   async (req) => {
@@ -21,7 +21,7 @@ serve(
           return new Response("No file uploaded.", { status: 400 });
         }
 
-        // Save file to temp
+        // Save file temporarily
         const tempFilePath = `/tmp/${crypto.randomUUID()}-${file.name}`;
         const bytes = new Uint8Array(await file.arrayBuffer());
         await Deno.writeFile(tempFilePath, bytes);
@@ -39,7 +39,7 @@ serve(
             result,
             usedOCR,
           }),
-          { headers: { "content-type": "application/json" } }
+          { headers: { "content-type": "application/json" } },
         );
       } catch (err) {
         console.error("❌ Upload handler failed:", err);
@@ -47,14 +47,15 @@ serve(
       }
     }
 
-    return new Response("ClinSynapseCloud API", { status: 200 });
+     return new Response("ClinSynapseCloud API", { status: 200 });
   },
   {
-    // 🟢 THIS FIXES RENDER PORT BUG
     port: PORT,
-    hostname: "0.0.0.0",
+    hostname: "0.0.0.0", // REQUIRED FOR RENDER
   }
 );
+
+
 
 
 
