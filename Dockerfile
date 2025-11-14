@@ -1,10 +1,12 @@
-FROM denoland/deno:1.48.0
+FROM denoland/deno:1.47.3
 
 WORKDIR /app
+
+# Copy all files
 COPY . .
 
-# Pre-cache dependencies to speed startup
+# Cache dependencies
 RUN deno cache server/http.ts
 
 # Start the server
-CMD ["deno", "run", "--allow-net", "--allow-env", "--allow-read", "--allow-write", "server/http.ts"]
+CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write", "server/http.ts"]
