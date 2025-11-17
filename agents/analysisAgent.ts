@@ -7,7 +7,6 @@
 
 import "jsr:@std/dotenv/load";
 import OpenAI from "https://deno.land/x/openai@v4.24.1/mod.ts";
-import { generateLabReportPDF } from "./reports/generateReport.ts";
 
 const EDENAI_API_KEY = Deno.env.get("EDENAI_API_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
@@ -28,7 +27,6 @@ type LabEntry = {
 
 // ------------------------------------------------------------
 // Core Lab Dictionary (~"250-style" foundation)
-// (You can extend this list anytime – same pattern.)
 // ------------------------------------------------------------
 
 const LAB_ENTRIES: LabEntry[] = [
@@ -601,10 +599,9 @@ async function extractTextWithEdenAI(filePath: string): Promise<string> {
 
   const form = new FormData();
 
-  // MUST be only ONE primary provider
+  // Single primary provider
   form.append("providers", "google");
-
-  // Optional fallback providers (EdenAI requires one per line)
+  // Optional fallbacks
   form.append("fallback_providers", "microsoft");
   form.append("fallback_providers", "amazon");
 
@@ -632,66 +629,11 @@ async function extractTextWithEdenAI(filePath: string): Promise<string> {
   return merged.trim();
 }
 
-
-
-// ============================================================
-// SMART LAB PARSER (multi-column, OCR-noise tolerant)
-// ============================================================
-
-function smartExtractLabValues(text: string): Array<{
-  rawName: string;
-  value: number | string | null;
-  units: string | null;
-  rawLine: string;
-}> {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-
-  const results: Array<{
-    rawName: string;
-    value: number | string | null;
-    units: string | null;
-    rawLine: string;
-  }> = [];
-
-  const valueRegex =
-    /(-?\d+(?:[.,]\d+)?)(?:\s*(mg\/dL|mmol\/L|pg\/mL|ng\/mL|µIU\/mL|uIU\/mL|U\/L|%|g\/dL|fL|mmol|mEq\/L|×10\^3\/µL|×10\^6\/µL))?/i;
-
-  for (const rawLine of lines) {
-    const parts = rawLine.split(/\s{2,}|\t/); // multi-column split
-
-    for (const part of parts) {
-      const m = part.match(valueRegex);
-      if (!m) continue;
-
-      // Normalize decimal comma
-      let val = m[1].replace(",", ".");
-      let numVal = parseFloat(val);
-      if (isNaN(numVal)) numVal = null;
-
-      const units = m[2] || null;
-
-      const nameGuess = part.split(m[1])[0].trim() ||
-        rawLine.split(m[1])[0].trim();
-
-      if (!nameGuess) continue;
-
-      results.push({
-        rawName: nameGuess,
-        value: numVal,
-        units,
-        rawLine
-      });
-    }
-  }
-
-  return results;
-}
-
 // ============================================================
 // GPT-4o-mini Interpretation using Dictionary + Ranges
 // ============================================================
 
-async function runLLMAnalysis(text: string): Promise<Record<string, unknown>> {
+async function runLLMAnalysis(text: string): Promise<any> {
   const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
   const dictJson = JSON.stringify(LAB_DICTIONARY_FOR_PROMPT);
@@ -770,48 +712,44 @@ Return STRICT JSON only in this shape:
 }
 
 // ============================================================
-// MAIN ANALYZER – called by server/http.ts
+// MAIN ANALYZER – exported function used by server/http.ts
+//  • NO PDF GENERATION HERE
+//  • Returns JSON only (id, summary, key_insights, tests)
 // ============================================================
 
-export async function analyzeLabReport(filePath: string): Promise<{
-  extractedText: string;
-  result: Record<string, unknown>;
-  usedOCR: boolean;
-  pdf_url: string;
+export async function analysisAgent(
+  fileBytes: Uint8Array,
+  filename: string,
+): Promise<{
+  id: string;
+  summary: string;
+  key_insights: any[];
+  tests: any[];
 }> {
   console.log("🧠 ClinSynapseCloud Analyzer Starting (EdenAI + Dictionary)…");
 
-  // 1) OCR via EdenAI
-  const extractedText = await extractTextWithEdenAI(filePath);
-  const usedOCR = true; // since EdenAI is OCR-based
+  // 1) Save the uploaded file temporarily so EdenAI can read it
+  const tempPath = `/tmp/${crypto.randomUUID()}-${filename}`;
+  await Deno.writeFile(tempPath, fileBytes);
 
-  // 2) GPT interpretation using dictionary
+  // 2) OCR via EdenAI
+  const extractedText = await extractTextWithEdenAI(tempPath);
+
+  // 3) GPT interpretation using dictionary
   const result = await runLLMAnalysis(extractedText);
-
-  // Cast result so TS doesn't complain about unknown keys
   const r = result as any;
 
-  // 3) Build analysis object for PDF generator
-  const analysis = {
-    summary: r.summary ?? "",
-    keyInsights: r.keyInsights ?? [],
-    tests: r.tests ?? [],
-    patientName: r.patientName ?? "",
-    reportDate: new Date().toISOString().slice(0, 10),
-    patientDob: r.patientDob ?? "",
-  };
+  // 4) Build output for the HTTP layer
+  const id = crypto.randomUUID();
 
-  // 4) Generate PDF
-  const reportId = crypto.randomUUID();
-  const pdf_url = await generateLabReportPDF(analysis, reportId);
-
-  // 5) Return full output
   return {
-    extractedText,
-    result,
-    usedOCR,
-    pdf_url,
+    id,
+    summary: r.summary ?? "",
+    // You can later refine what "key_insights" means; for now, reuse normalized_labs
+    key_insights: r.normalized_labs ?? [],
+    tests: r.normalized_labs ?? [],
   };
 }
+
 
 
