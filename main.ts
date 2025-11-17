@@ -1,58 +1,67 @@
-import { createAgentGraph } from "./agentGraph.ts";
+// ============================================================================
+// main.ts — Web Server for ClinSynapseCloud + LabResultsExplained
+// ============================================================================
 
-async function runMedicalQuery() {
-  const graph = createAgentGraph();
+import { Application, Router, send } from "https://deno.land/x/oak/mod.ts";
+import { analysisAgent } from "./agents/analysisAgent.ts";
+import { generateReportAndSave } from "./agents/reports/generateReport.ts";
+import { healthCheck } from "./agents/healthCheck.ts";
 
-  // Get user input
-  console.log("Enter your medical query:");
-  const userQuery = prompt("> ");
+const app = new Application();
+const router = new Router();
 
-  if (!userQuery) {
-    console.log("No query provided. Exiting...");
+// ---------------------------------------------------------------------------
+// HEALTH CHECK (pdf engine test)
+// ---------------------------------------------------------------------------
+router.get("/health/pdf", async (ctx) => {
+  ctx.response.headers.set("Content-Type", "application/json");
+  ctx.response.body = await healthCheck();
+});
+
+// ---------------------------------------------------------------------------
+// MAIN LAB REPORT ENDPOINT
+// POST /analyze  (multipart file upload)
+// ---------------------------------------------------------------------------
+router.post("/analyze", async (ctx) => {
+  const body = ctx.request.body({ type: "form-data" });
+  const form = await body.value.read();
+  const file = form.files?.[0];
+
+  if (!file) {
+    ctx.response.status = 400;
+    ctx.response.body = { success: false, error: "No file uploaded" };
     return;
   }
 
-  const initialState = {
-    messages: [],
-    userQuery,
-    tasks: {},
-    medILlamaResponse: [],
-    webSearchResponse: [],
-    finalResponse: "",
-    iterationCount: 0,
-    qualityPassed: true,
-    reflectionFeedback: null
+  // Run AI agent
+  const analysis = await analysisAgent(file);
+
+  // Create PDF
+  const pdfUrl = await generateReportAndSave(analysis, analysis.id);
+
+  ctx.response.body = {
+    success: true,
+    ...analysis,
+    pdf_url: pdfUrl,
   };
+});
 
-  const config = {
-    configurables: {
-      thread_id: "stream_events"
-    },
-    // streamMode: ["updates", "messages"] as const
-    streamMode: ["updates"] as const
-  };
+// ---------------------------------------------------------------------------
+// STATIC FILES — Serve generated PDFs under /reports
+// ---------------------------------------------------------------------------
+router.get("/reports/:file", async (ctx) => {
+  const fileName = ctx.params.file;
+  await send(ctx, fileName, {
+    root: `${Deno.cwd()}/reports`,
+  });
+});
 
-  try {
-    const stream = await graph.stream(initialState, config);
+// ---------------------------------------------------------------------------
+// START SERVER
+// ---------------------------------------------------------------------------
+const PORT = Deno.env.get("PORT") ?? "8000";
 
-    for await (const event of stream) {
-      const [mode, data] = event;
-      
-      if (mode === "updates") {
-        console.log("State update:", data);
-      } else if (mode === "messages") {
-        const [messageChunk, metadata] = data;
-        if (metadata.langgraph_node === "medILlama") {
-          process.stdout.write(messageChunk.content); // Stream tokens to console
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Error:", error);
-  }
-}
-
-// Execute the function when this is the main module
-if (import.meta.main) {
-  runMedicalQuery();
-}
+console.log(`🚀 Server running on port ${PORT}`);
+app.use(router.routes());
+app.use(router.allowedMethods());
+await app.listen({ port: Number(PORT) });
