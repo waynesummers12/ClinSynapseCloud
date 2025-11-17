@@ -7,6 +7,7 @@
 
 import "jsr:@std/dotenv/load";
 import OpenAI from "https://deno.land/x/openai@v4.24.1/mod.ts";
+import { generateLabReportPDF } from "./reports/generateReport.ts";
 
 const EDENAI_API_KEY = Deno.env.get("EDENAI_API_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
@@ -776,20 +777,40 @@ export async function analyzeLabReport(filePath: string): Promise<{
   extractedText: string;
   result: Record<string, unknown>;
   usedOCR: boolean;
+  pdf_url: string;
 }> {
   console.log("🧠 ClinSynapseCloud Analyzer Starting (EdenAI + Dictionary)…");
 
   // 1) OCR via EdenAI
   const extractedText = await extractTextWithEdenAI(filePath);
-  const usedOCR = true; // since Eden is OCR-based
+  const usedOCR = true; // since EdenAI is OCR-based
 
   // 2) GPT interpretation using dictionary
   const result = await runLLMAnalysis(extractedText);
 
+  // Cast result so TS doesn't complain about unknown keys
+  const r = result as any;
+
+  // 3) Build analysis object for PDF generator
+  const analysis = {
+    summary: r.summary ?? "",
+    keyInsights: r.keyInsights ?? [],
+    tests: r.tests ?? [],
+    patientName: r.patientName ?? "",
+    reportDate: new Date().toISOString().slice(0, 10),
+    patientDob: r.patientDob ?? "",
+  };
+
+  // 4) Generate PDF
+  const reportId = crypto.randomUUID();
+  const pdf_url = await generateLabReportPDF(analysis, reportId);
+
+  // 5) Return full output
   return {
     extractedText,
     result,
     usedOCR,
+    pdf_url,
   };
 }
 

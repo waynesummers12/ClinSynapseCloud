@@ -12,6 +12,35 @@ serve(
   async (req) => {
     const url = new URL(req.url);
 
+    // ----------------------------------------------------------
+    // PDF DELIVERY ROUTE
+    // ----------------------------------------------------------
+    if (req.method === "GET" && url.pathname.startsWith("/reports/")) {
+      const fileName = url.pathname.replace("/reports/", "");
+      if (!fileName) {
+        return new Response("Report not found", { status: 404 });
+      }
+
+      try {
+        const filePath = `./reports/${fileName}`;
+        const pdfBytes = await Deno.readFile(filePath);
+
+        return new Response(pdfBytes, {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": `inline; filename="${fileName}"`,
+          },
+        });
+      } catch (err) {
+        console.error("❌ PDF load error:", err);
+        return new Response("PDF not found", { status: 404 });
+      }
+    }
+
+    // ----------------------------------------------------------
+    // FILE UPLOAD ROUTE
+    // ----------------------------------------------------------
     if (req.method === "POST" && url.pathname === "/upload") {
       try {
         const formData = await req.formData();
@@ -29,7 +58,7 @@ serve(
         console.log(`📁 File saved to temp: ${tempFilePath}`);
 
         // Run analyzer
-        const { extractedText, result, usedOCR } =
+        const { extractedText, result, usedOCR, pdf_url } =
           await analyzeLabReport(tempFilePath);
 
         return new Response(
@@ -38,6 +67,7 @@ serve(
             extractedText,
             result,
             usedOCR,
+            pdf_url,     // <-- return PDF URL to Bubble
           }),
           { headers: { "content-type": "application/json" } },
         );
@@ -47,12 +77,15 @@ serve(
       }
     }
 
-     return new Response("ClinSynapseCloud API", { status: 200 });
+    // ----------------------------------------------------------
+    // DEFAULT ROOT RESPONSE
+    // ----------------------------------------------------------
+    return new Response("ClinSynapseCloud API", { status: 200 });
   },
   {
     port: PORT,
     hostname: "0.0.0.0", // REQUIRED FOR RENDER
-  }
+  },
 );
 
 
