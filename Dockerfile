@@ -13,19 +13,12 @@ RUN mkdir -p /app/reports
 # Cache dependencies (helps with faster builds)
 RUN deno cache server/http.ts
 
-# Expose port for Render (informational)
+# Expose port (informational)
 EXPOSE 8000
 
 # Run the server with required permissions
-CMD [
-  "run",
-  "--allow-env",
-  "--allow-net",
-  "--allow-read",
-  "--allow-write=/tmp",
-  "--allow-write=/app/reports",
-  "server/http.ts"
-]
+CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write=/tmp", "--allow-write=/app/reports", "server/http.ts"]
+
 
 
 
