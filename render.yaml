@@ -1,7 +1,17 @@
 services:
   - type: web
-    name: ClinSynapseCloud
-    runtime: docker
+    name: clinsynapsecloud
+    env: docker
+    plan: starter
     region: oregon
-    plan: free
+
+    # Your Dockerfile builds the server
     dockerfilePath: ./Dockerfile
+
+    # Expose port 8000 for Deno server
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PUBLIC_BASE_URL
+        value: https://clinsynapsecloud.onrender.com
+
