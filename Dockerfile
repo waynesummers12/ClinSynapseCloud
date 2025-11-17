@@ -10,14 +10,14 @@ COPY . .
 # Create reports folder for generated PDFs
 RUN mkdir -p /app/reports
 
-# Cache dependencies (helps with faster builds)
+# Cache dependencies
 RUN deno cache server/http.ts
 
 # Expose port (informational)
 EXPOSE 8000
 
-# Run the server with required permissions
-CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write=/tmp", "--allow-write=/app/reports", "server/http.ts"]
+# Run server with correct permissions
+CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write=/tmp,/app/reports", "server/http.ts"]
 
 
 
