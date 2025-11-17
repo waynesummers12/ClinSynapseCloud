@@ -10,7 +10,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { extname, join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
 import { analysisAgent } from "../agents/analysisAgent.ts";
-import { generateReportAndSave } from "../agents/generateReport.ts";
+import { generateReportAndSave } from "../agents/reports/generateReport.ts";
 
 // Directory where PDFs are stored
 const REPORTS_DIR = "./reports";
