@@ -1,380 +1,475 @@
-// reports/generateReport.ts
-// Deno + pdf-lib based PDF generator for LabResultsExplained
+// agents/generateReport.ts
+// ---------------------------------------------------------------------------
+// LabResultsExplained PDF generator
+// - Uses pdf-lib to create a branded multi-page PDF
+// - Cover page with logo + summary
+// - Key insights page with yellow cards
+// - Test-by-test table page(s)
+// ---------------------------------------------------------------------------
 
 import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib";
+import {
+  dirname,
+  fromFileUrl,
+  join,
+} from "https://deno.land/std@0.224.0/path/mod.ts";
 
-export interface LabTest {
+// ----------------------- Types ---------------------------------------------
+
+export interface LabTestResult {
   name: string;
   value: string | number;
   unit?: string;
-  referenceRange?: string;
+  reference_low?: number | null;
+  reference_high?: number | null;
+  status?: "low" | "high" | "normal" | "critical" | string; // we’ll color-code this
   interpretation?: string;
-  flag?: "HIGH" | "LOW" | "CRITICAL" | "NORMAL" | string;
-  category?: string;
 }
 
-export interface LabAnalysis {
+export interface LREAnalysis {
+  patient_name?: string;
+  report_date?: string; // ISO string or plain text
   summary: string;
-  keyInsights: string[]; // already generated key points
-  tests: LabTest[];
-  patientName?: string;
-  reportDate?: string;
-  patientDob?: string;
+  key_insights: string[]; // short bullets
+  tests: LabTestResult[];
 }
 
+// ----------------------- Config --------------------------------------------
+
+const PAGE_WIDTH = 612; // US Letter 8.5 x 11 in points
+const PAGE_HEIGHT = 792;
+
+const MARGIN_X = 50;
+const MARGIN_Y = 60;
+
+// Colors (Theme C)
+const COLORS = {
+  backgroundDark: rgb(0.06, 0.07, 0.12), // dark navy
+  pink: rgb(0.96, 0.42, 0.80),
+  pinkSoft: rgb(0.98, 0.72, 0.90),
+  textOnDark: rgb(1, 1, 1),
+  textMain: rgb(0.10, 0.12, 0.18),
+  textMuted: rgb(0.36, 0.40, 0.48),
+  yellowCard: rgb(1.0, 0.93, 0.70),
+  yellowBorder: rgb(0.98, 0.83, 0.45),
+  tableHeader: rgb(0.95, 0.96, 0.99),
+  tableStripe: rgb(0.98, 0.99, 1),
+  statusHigh: rgb(0.89, 0.26, 0.36),
+  statusLow: rgb(0.10, 0.48, 0.82),
+  statusNormal: rgb(0.26, 0.64, 0.38),
+  statusCritical: rgb(0.60, 0.00, 0.20),
+};
+
+// Where to save reports on disk
 const REPORTS_DIR = "./reports";
-const BASE_URL = "https://clinsynapsecloud.onrender.com"; // adjust if needed
 
-function flagColor(flag?: string) {
-  if (!flag) return rgb(0, 0, 0);
-  const f = flag.toUpperCase();
-  if (f === "HIGH") return rgb(0.8, 0.1, 0.1);
-  if (f === "LOW") return rgb(0.1, 0.2, 0.7);
-  if (f === "CRITICAL") return rgb(0.9, 0.2, 0.0);
-  return rgb(0, 0.5, 0); // NORMAL / default greenish
+const BASE_URL =
+  Deno.env.get("PUBLIC_BASE_URL") ?? "https://clinsynapsecloud.onrender.com";
+
+// ----------------------- Helpers -------------------------------------------
+
+function statusColor(status?: string) {
+  if (!status) return COLORS.statusNormal;
+  const s = status.toLowerCase();
+  if (s.includes("critical")) return COLORS.statusCritical;
+  if (s.includes("high")) return COLORS.statusHigh;
+  if (s.includes("low")) return COLORS.statusLow;
+  if (s.includes("normal")) return COLORS.statusNormal;
+  return COLORS.statusNormal;
 }
 
-export async function generateLabReportPDF(
-  analysis: LabAnalysis,
-  reportId: string,
-): Promise<string> {
-  const pdfDoc = await PDFDocument.create();
+// Safe text wrap for simple paragraphs
+function drawWrappedText(options: {
+  page: any;
+  text: string;
+  x: number;
+  y: number;
+  maxWidth: number;
+  lineHeight: number;
+  font: any;
+  fontSize: number;
+}) {
+  const { page, text, x, maxWidth, lineHeight, font, fontSize } = options;
+  let { y } = options;
 
-  // === Fonts ===
+  const words = text.split(/\s+/);
+  let line = "";
+
+  for (const word of words) {
+    const testLine = line ? `${line} ${word}` : word;
+    const width = font.widthOfTextAtSize(testLine, fontSize);
+    if (width > maxWidth && line) {
+      page.drawText(line, { x, y, size: fontSize, font, color: COLORS.textMain });
+      line = word;
+      y -= lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) {
+    page.drawText(line, { x, y, size: fontSize, font, color: COLORS.textMain });
+    y -= lineHeight;
+  }
+  return y;
+}
+
+// Resolve path to logo in /assets
+async function loadLogoBytes(): Promise<Uint8Array> {
+  const here = dirname(fromFileUrl(import.meta.url));
+  const logoPath = join(here, "..", "assets", "Lab Results Explained AI Logo.png");
+  return await Deno.readFile(logoPath);
+}
+
+// ----------------------- Core PDF Builder ----------------------------------
+
+export async function buildLREPdf(analysis: LREAnalysis): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  // Letter size in points: 612 x 792
-  const pageWidth = 612;
-  const pageHeight = 792;
-  const margin = 50;
+  // -------- Cover Page ------------------------------------------------------
+  const cover = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
 
-  // === Cover Page ===
-  let page = pdfDoc.addPage([pageWidth, pageHeight]);
-  let { width: pw, height: ph } = page.getSize();
+  // dark background
+  cover.drawRectangle({
+    x: 0,
+    y: 0,
+    width: PAGE_WIDTH,
+    height: PAGE_HEIGHT,
+    color: COLORS.backgroundDark,
+  });
 
   // Logo
-const logoBytes = await Deno.readFile(
-  new URL("../../../assets/lre-logo.png", import.meta.url),
-);
-  const logoImage = await pdfDoc.embedPng(logoBytes);
-  const logoScale = 0.4;
-  const logoWidth = logoImage.width * logoScale;
-  const logoHeight = logoImage.height * logoScale;
-
-  page.drawImage(logoImage, {
-    x: (pw - logoWidth) / 2,
-    y: ph - margin - logoHeight,
-    width: logoWidth,
-    height: logoHeight,
-  });
-
-  let y = ph - margin - logoHeight - 40;
-
-  // Title
-  const title = "Your Personalized Lab Report";
-  const titleFontSize = 24;
-  const titleWidth = fontBold.widthOfTextAtSize(title, titleFontSize);
-
-  page.drawText(title, {
-    x: (pw - titleWidth) / 2,
-    y,
-    size: titleFontSize,
-    font: fontBold,
-    color: rgb(0.05, 0.05, 0.1),
-  });
-
-  y -= 40;
-
-  // Patient info block
-  const infoFontSize = 11;
-  const lineGap = 16;
-
-  const lines: string[] = [];
-  if (analysis.patientName) lines.push(`Name: ${analysis.patientName}`);
-  if (analysis.reportDate) lines.push(`Report Date: ${analysis.reportDate}`);
-  if (analysis.patientDob) lines.push(`Date of Birth: ${analysis.patientDob}`);
-
-  if (lines.length > 0) {
-    const boxHeight = lines.length * lineGap + 16;
-    const boxWidth = pw - margin * 2;
-
-    page.drawRectangle({
-      x: margin,
-      y: y - boxHeight + 8,
-      width: boxWidth,
-      height: boxHeight,
-      color: rgb(1, 1, 1),
-      borderColor: rgb(0.85, 0.85, 0.9),
-      borderWidth: 1,
+  try {
+    const logoBytes = await loadLogoBytes();
+    const logoImage = await pdfDoc.embedPng(logoBytes);
+    const logoWidth = 260;
+    const logoHeight = (logoImage.height / logoImage.width) * logoWidth;
+    cover.drawImage(logoImage, {
+      x: (PAGE_WIDTH - logoWidth) / 2,
+      y: PAGE_HEIGHT - logoHeight - 120,
+      width: logoWidth,
+      height: logoHeight,
     });
-
-    let infoY = y + boxHeight - lineGap - 4;
-    for (const line of lines) {
-      page.drawText(line, {
-        x: margin + 12,
-        y: infoY,
-        size: infoFontSize,
-        font: fontRegular,
-        color: rgb(0.1, 0.1, 0.15),
-      });
-      infoY -= lineGap;
-    }
-    y -= boxHeight + 24;
+  } catch (_e) {
+    // If logo fails to load, just skip – PDF still renders
   }
 
-  // Overall summary heading
-  page.drawText("Summary", {
-    x: margin,
-    y,
-    size: 14,
+  // Title text
+  cover.drawText("Your Personalized Lab Report", {
+    x: MARGIN_X,
+    y: PAGE_HEIGHT - 320,
+    size: 24,
     font: fontBold,
-    color: rgb(0.1, 0.1, 0.15),
+    color: COLORS.textOnDark,
   });
-  y -= 20;
+
+  const patientLine = analysis.patient_name
+    ? `For: ${analysis.patient_name}`
+    : "For: Patient";
+  cover.drawText(patientLine, {
+    x: MARGIN_X,
+    y: PAGE_HEIGHT - 350,
+    size: 14,
+    font: fontRegular,
+    color: COLORS.textOnDark,
+  });
+
+  const dateLine = analysis.report_date
+    ? `Report date: ${analysis.report_date}`
+    : "";
+  if (dateLine) {
+    cover.drawText(dateLine, {
+      x: MARGIN_X,
+      y: PAGE_HEIGHT - 370,
+      size: 12,
+      font: fontRegular,
+      color: COLORS.textOnDark,
+    });
+  }
 
   // Summary box
-  const summaryText = analysis.summary || "No summary available.";
-  const summaryFontSize = 11;
-  const summaryMaxWidth = pw - margin * 2 - 16;
-
-  const summaryLines = wrapText(summaryText, summaryFontSize, summaryMaxWidth, fontRegular);
-  const summaryBoxHeight = summaryLines.length * (summaryFontSize + 4) + 16;
-
-  page.drawRectangle({
-    x: margin,
-    y: y - summaryBoxHeight + 8,
-    width: pw - margin * 2,
-    height: summaryBoxHeight,
-    color: rgb(1, 1, 1),
-    borderColor: rgb(0.92, 0.92, 0.96),
+  cover.drawRectangle({
+    x: MARGIN_X,
+    y: PAGE_HEIGHT - 520,
+    width: PAGE_WIDTH - MARGIN_X * 2,
+    height: 120,
+    color: COLORS.textOnDark,
+    opacity: 0.12,
+    borderColor: COLORS.pinkSoft,
     borderWidth: 1,
   });
 
-  let summaryY = y + summaryBoxHeight - (summaryFontSize + 6);
-  for (const line of summaryLines) {
-    page.drawText(line, {
-      x: margin + 10,
-      y: summaryY,
-      size: summaryFontSize,
-      font: fontRegular,
-      color: rgb(0.1, 0.1, 0.15),
-    });
-    summaryY -= summaryFontSize + 4;
-  }
-
-  // === Page 2: Key Insights ===
-  page = pdfDoc.addPage([pageWidth, pageHeight]);
-  ({ width: pw, height: ph } = page.getSize());
-  y = ph - margin;
-
-  page.drawText("Key Insights", {
-    x: margin,
-    y,
-    size: 16,
-    font: fontBold,
-    color: rgb(0.1, 0.1, 0.2),
+  let summaryY = PAGE_HEIGHT - 440;
+  summaryY = drawWrappedText({
+    page: cover,
+    text: analysis.summary,
+    x: MARGIN_X + 16,
+    y: summaryY,
+    maxWidth: PAGE_WIDTH - MARGIN_X * 2 - 32,
+    lineHeight: 16,
+    font: fontRegular,
+    fontSize: 11,
   });
-  y -= 24;
 
-  const insightFontSize = 11;
-  const insightMaxWidth = pw - margin * 2 - 20;
-
-  if (analysis.keyInsights && analysis.keyInsights.length > 0) {
-    for (const insight of analysis.keyInsights) {
-      const lines = wrapText(insight, insightFontSize, insightMaxWidth, fontRegular);
-      const boxHeight = lines.length * (insightFontSize + 4) + 14;
-
-      if (y - boxHeight < margin) {
-        page = pdfDoc.addPage([pageWidth, pageHeight]);
-        ({ width: pw, height: ph } = page.getSize());
-        y = ph - margin;
-      }
-
-      // soft pink highlight
-      page.drawRectangle({
-        x: margin,
-        y: y - boxHeight + 4,
-        width: pw - margin * 2,
-        height: boxHeight,
-        color: rgb(1, 0.97, 0.99),
-        borderColor: rgb(0.97, 0.85, 0.93),
-        borderWidth: 0.7,
-      });
-
-      let lineY = y + boxHeight - (insightFontSize + 4);
-      for (const line of lines) {
-        page.drawText(line, {
-          x: margin + 10,
-          y: lineY,
-          size: insightFontSize,
-          font: fontRegular,
-          color: rgb(0.15, 0.1, 0.2),
-        });
-        lineY -= insightFontSize + 4;
-      }
-
-      y -= boxHeight + 12;
-    }
-  } else {
-    page.drawText("No key insights were generated.", {
-      x: margin,
-      y,
-      size: insightFontSize,
-      font: fontRegular,
-      color: rgb(0.2, 0.2, 0.25),
-    });
-    y -= 20;
-  }
-
-  // === Subsequent pages: Detailed Tests ===
-  page = pdfDoc.addPage([pageWidth, pageHeight]);
-  ({ width: pw, height: ph } = page.getSize());
-  y = ph - margin;
-
-  page.drawText("Detailed Results", {
-    x: margin,
-    y,
-    size: 16,
-    font: fontBold,
-    color: rgb(0.1, 0.1, 0.2),
+  cover.drawText("This report is for informational purposes only and is not a diagnosis.", {
+    x: MARGIN_X,
+    y: 80,
+    size: 8,
+    font: fontRegular,
+    color: COLORS.textOnDark,
   });
-  y -= 24;
 
-  const testFontSize = 11;
-  const maxTextWidth = pw - margin * 2;
+  // -------- Key Insights Page ----------------------------------------------
+  const insightsPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
 
-  for (const test of analysis.tests || []) {
-    if (y - 80 < margin) {
-      page = pdfDoc.addPage([pageWidth, pageHeight]);
-      ({ width: pw, height: ph } = page.getSize());
-      y = ph - margin;
-      page.drawText("Detailed Results (cont.)", {
-        x: margin,
-        y,
-        size: 14,
-        font: fontBold,
-        color: rgb(0.1, 0.1, 0.2),
-      });
-      y -= 22;
+  insightsPage.drawText("Key Insights", {
+    x: MARGIN_X,
+    y: PAGE_HEIGHT - MARGIN_Y,
+    size: 20,
+    font: fontBold,
+    color: COLORS.textMain,
+  });
+
+  insightsPage.drawText("Top findings and patterns detected from your lab results:", {
+    x: MARGIN_X,
+    y: PAGE_HEIGHT - MARGIN_Y - 22,
+    size: 11,
+    font: fontRegular,
+    color: COLORS.textMuted,
+  });
+
+  let y = PAGE_HEIGHT - MARGIN_Y - 60;
+
+  const insights = analysis.key_insights && analysis.key_insights.length
+    ? analysis.key_insights
+    : ["No major concerns detected. Continue regular follow-up with your clinician."];
+
+  const cardHeight = 70;
+  const cardGap = 12;
+
+  insights.forEach((insight, index) => {
+    if (y - cardHeight < 70) {
+      // new page if we run out of space
+      y = PAGE_HEIGHT - MARGIN_Y;
     }
 
-    const flag = test.flag || "NORMAL";
-    const fc = flagColor(flag);
-    const header = test.name || "Unnamed Test";
+    insightsPage.drawRectangle({
+      x: MARGIN_X,
+      y: y - cardHeight,
+      width: PAGE_WIDTH - MARGIN_X * 2,
+      height: cardHeight,
+      color: COLORS.yellowCard,
+      borderColor: COLORS.yellowBorder,
+      borderWidth: 1,
+      opacity: 1,
+    });
 
-    // Test header
-    page.drawText(header, {
-      x: margin,
-      y,
-      size: 12,
+    const label =
+      index === 0
+        ? "Most important insight"
+        : index === 1
+        ? "Pattern to watch"
+        : "Additional insight";
+
+    insightsPage.drawText(label, {
+      x: MARGIN_X + 14,
+      y: y - 16,
+      size: 9,
       font: fontBold,
-      color: rgb(0.08, 0.08, 0.15),
+      color: COLORS.textMuted,
     });
 
-    // Flag pill
-    const pillText = flag.toUpperCase();
-    const pillSize = 9;
-    const pillWidth = fontBold.widthOfTextAtSize(pillText, pillSize) + 14;
-    const pillHeight = pillSize + 6;
-
-    page.drawRectangle({
-      x: pw - margin - pillWidth,
-      y: y - 2,
-      width: pillWidth,
-      height: pillHeight,
-      color: fc,
-      borderRadius: 8,
-    });
-
-    page.drawText(pillText, {
-      x: pw - margin - pillWidth + 7,
-      y: y + 2,
-      size: pillSize,
-      font: fontBold,
-      color: rgb(1, 1, 1),
-    });
-
-    y -= 18;
-
-    // Value / range line
-    const val = `${test.value}${test.unit ? " " + test.unit : ""}`;
-    const ref = test.referenceRange ? test.referenceRange : "Not provided";
-
-    const infoLine = `Result: ${val}   |   Reference: ${ref}`;
-    page.drawText(infoLine, {
-      x: margin,
-      y,
-      size: testFontSize,
+    drawWrappedText({
+      page: insightsPage,
+      text: insight,
+      x: MARGIN_X + 14,
+      y: y - 32,
+      maxWidth: PAGE_WIDTH - MARGIN_X * 2 - 24,
+      lineHeight: 13,
       font: fontRegular,
-      color: rgb(0.15, 0.15, 0.2),
+      fontSize: 11,
     });
 
-    y -= 16;
+    y -= cardHeight + cardGap;
+  });
 
-    // Interpretation
-    const interp = test.interpretation || "No interpretation available.";
-    const interpLines = wrapText(interp, testFontSize, maxTextWidth, fontRegular);
-    for (const line of interpLines) {
-      if (y - (testFontSize + 4) < margin) {
-        page = pdfDoc.addPage([pageWidth, pageHeight]);
-        ({ width: pw, height: ph } = page.getSize());
-        y = ph - margin;
-      }
-      page.drawText(line, {
-        x: margin,
-        y,
-        size: testFontSize,
+  // -------- Test Table Page(s) ---------------------------------------------
+  let tablePage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let tableY = PAGE_HEIGHT - MARGIN_Y;
+
+  function drawTableHeader() {
+    tablePage.drawText("Detailed Results", {
+      x: MARGIN_X,
+      y: tableY,
+      size: 18,
+      font: fontBold,
+      color: COLORS.textMain,
+    });
+
+    tableY -= 26;
+
+    tablePage.drawText(
+      "Each value is compared to typical reference ranges. Always discuss results with your clinician.",
+      {
+        x: MARGIN_X,
+        y: tableY,
+        size: 9,
         font: fontRegular,
-        color: rgb(0.18, 0.18, 0.25),
-      });
-      y -= testFontSize + 4;
-    }
+        color: COLORS.textMuted,
+      },
+    );
 
-    // Divider
-    y -= 6;
-    page.drawLine({
-      start: { x: margin, y },
-      end: { x: pw - margin, y },
-      thickness: 0.5,
-      color: rgb(0.9, 0.9, 0.94),
+    tableY -= 20;
+
+    // header background
+    tablePage.drawRectangle({
+      x: MARGIN_X,
+      y: tableY - 18,
+      width: PAGE_WIDTH - MARGIN_X * 2,
+      height: 18,
+      color: COLORS.tableHeader,
     });
-    y -= 14;
+
+    const cols = [MARGIN_X + 8, MARGIN_X + 170, MARGIN_X + 260, MARGIN_X + 360, MARGIN_X + 470];
+
+    const headers = ["Test", "Your value", "Ref. range", "Status", "Notes"];
+    headers.forEach((h, i) => {
+      tablePage.drawText(h, {
+        x: cols[i],
+        y: tableY - 6,
+        size: 9,
+        font: fontBold,
+        color: COLORS.textMain,
+      });
+    });
+
+    tableY -= 26;
   }
 
-  // Ensure reports directory
+  const cols = [MARGIN_X + 8, MARGIN_X + 170, MARGIN_X + 260, MARGIN_X + 360, MARGIN_X + 470];
+  drawTableHeader();
+
+  const tests = analysis.tests ?? [];
+  for (const test of tests) {
+    if (tableY < 80) {
+      // new page if we run out of space
+      tablePage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      tableY = PAGE_HEIGHT - MARGIN_Y;
+      drawTableHeader();
+    }
+
+    const stripe = tests.indexOf(test) % 2 === 0;
+    if (stripe) {
+      tablePage.drawRectangle({
+        x: MARGIN_X,
+        y: tableY - 18,
+        width: PAGE_WIDTH - MARGIN_X * 2,
+        height: 18,
+        color: COLORS.tableStripe,
+      });
+    }
+
+    const range =
+      test.reference_low != null && test.reference_high != null
+        ? `${test.reference_low} – ${test.reference_high}${test.unit ? " " + test.unit : ""}`
+        : "-";
+
+    const valueText = `${test.value}${test.unit ? " " + test.unit : ""}`;
+
+    tablePage.drawText(test.name ?? "-", {
+      x: cols[0],
+      y: tableY - 6,
+      size: 9,
+      font: fontRegular,
+      color: COLORS.textMain,
+    });
+
+    tablePage.drawText(valueText, {
+      x: cols[1],
+      y: tableY - 6,
+      size: 9,
+      font: fontRegular,
+      color: COLORS.textMain,
+    });
+
+    tablePage.drawText(range, {
+      x: cols[2],
+      y: tableY - 6,
+      size: 9,
+      font: fontRegular,
+      color: COLORS.textMain,
+    });
+
+    // status as a colored chip
+    const status = test.status ?? "normal";
+    const chipColor = statusColor(status);
+    const chipWidth = 60;
+    const chipHeight = 12;
+
+    tablePage.drawRectangle({
+      x: cols[3],
+      y: tableY - 14,
+      width: chipWidth,
+      height: chipHeight,
+      color: chipColor,
+      opacity: 0.18,
+      borderColor: chipColor,
+      borderWidth: 0.5,
+    });
+
+    tablePage.drawText(status.toUpperCase(), {
+      x: cols[3] + 4,
+      y: tableY - 6,
+      size: 8,
+      font: fontBold,
+      color: chipColor,
+    });
+
+    if (test.interpretation) {
+      const maxNoteWidth = PAGE_WIDTH - cols[4] - 8;
+      const textWidth = fontRegular.widthOfTextAtSize(
+        test.interpretation,
+        8,
+      );
+      const truncated =
+        textWidth > maxNoteWidth
+          ? test.interpretation.slice(0, 40) + "…"
+          : test.interpretation;
+
+      tablePage.drawText(truncated, {
+        x: cols[4],
+        y: tableY - 6,
+        size: 8,
+        font: fontRegular,
+        color: COLORS.textMuted,
+      });
+    }
+
+    tableY -= 20;
+  }
+
+  return await pdfDoc.save();
+}
+
+// ----------------------- Save + URL Helper ---------------------------------
+
+export async function generateReportAndSave(
+  analysis: LREAnalysis,
+  id: string,
+): Promise<string> {
+  const pdfBytes = await buildLREPdf(analysis);
+
   await Deno.mkdir(REPORTS_DIR, { recursive: true });
 
-  const pdfBytes = await pdfDoc.save();
-  const filePath = `${REPORTS_DIR}/${reportId}.pdf`;
-  await Deno.writeFile(filePath, pdfBytes);
+  const filename = `lre-report-${id}.pdf`;
+  const filepath = join(REPORTS_DIR, filename);
 
-  const pdfUrl = `${BASE_URL}/reports/${reportId}.pdf`;
-  return pdfUrl;
+  await Deno.writeFile(filepath, pdfBytes);
+
+  // This assumes your server exposes /reports as static files.
+  // e.g., GET /reports/lre-report-123.pdf
+  return `${BASE_URL}/reports/${filename}`;
 }
 
-// Simple text wrapper for pdf-lib
-function wrapText(
-  text: string,
-  fontSize: number,
-  maxWidth: number,
-  font: any,
-): string[] {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    const testLine = current ? current + " " + word : word;
-    const width = font.widthOfTextAtSize(testLine, fontSize);
-    if (width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = testLine;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
 

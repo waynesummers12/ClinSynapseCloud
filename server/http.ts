@@ -1,92 +1,157 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
-import { analyzeLabReport } from "../agents/analysisAgent.ts";
+// server/http.ts
+// -----------------------------------------------------------------------------
+// HTTP server for ClinSynapseCloud
+// Endpoints:
+//   POST /analyze → accepts file upload, runs analysis, generates PDF, returns JSON
+//   GET  /reports/:file → serves PDF reports
+// -----------------------------------------------------------------------------
 
-// REQUIRED FOR RENDER — Use their injected PORT
-const PORT = Number(Deno.env.get("PORT")) || 8080;
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { extname, join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
-console.log("🚀 ClinSynapse server starting...");
-console.log(`🌐 Binding server to 0.0.0.0:${PORT}`);
-console.log(`📤 Upload endpoint ready at http://0.0.0.0:${PORT}/upload`);
+import { analysisAgent } from "../agents/analysisAgent.ts";
+import { generateReportAndSave } from "../agents/generateReport.ts";
 
-serve(
-  async (req) => {
-    const url = new URL(req.url);
+// Directory where PDFs are stored
+const REPORTS_DIR = "./reports";
 
-    // ----------------------------------------------------------
-    // PDF DELIVERY ROUTE
-    // ----------------------------------------------------------
-    if (req.method === "GET" && url.pathname.startsWith("/reports/")) {
-      const fileName = url.pathname.replace("/reports/", "");
-      if (!fileName) {
-        return new Response("Report not found", { status: 404 });
-      }
+// Allow CORs for Bubble.io frontend
+const headers = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
 
-      try {
-        const filePath = `./reports/${fileName}`;
-        const pdfBytes = await Deno.readFile(filePath);
+// -----------------------------------------------------------------------------
+// Utility: Read multipart form-data
+// -----------------------------------------------------------------------------
+async function parseMultipartForm(req: Request): Promise<{ file: Uint8Array; filename: string }> {
+  const contentType = req.headers.get("content-type");
+  if (!contentType || !contentType.includes("multipart/form-data")) {
+    throw new Error("Invalid content-type. Must be multipart/form-data.");
+  }
 
-        return new Response(pdfBytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/pdf",
-            "content-disposition": `inline; filename="${fileName}"`,
-          },
-        });
-      } catch (err) {
-        console.error("❌ PDF load error:", err);
-        return new Response("PDF not found", { status: 404 });
-      }
-    }
+  const formData = await req.formData();
+  const file = formData.get("file") as File | null;
 
-    // ----------------------------------------------------------
-    // FILE UPLOAD ROUTE
-    // ----------------------------------------------------------
-    if (req.method === "POST" && url.pathname === "/upload") {
-      try {
-        const formData = await req.formData();
-        const file = formData.get("file");
+  if (!file) throw new Error("No file uploaded. Field name must be 'file'.");
 
-        if (!file || typeof file !== "object") {
-          return new Response("No file uploaded.", { status: 400 });
-        }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return { file: bytes, filename: file.name };
+}
 
-        // Save file temporarily
-        const tempFilePath = `/tmp/${crypto.randomUUID()}-${file.name}`;
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        await Deno.writeFile(tempFilePath, bytes);
+// -----------------------------------------------------------------------------
+// Route: GET /reports/<file>
+// Serves stored PDFs so Bubble can download
+// -----------------------------------------------------------------------------
+async function handleReportRequest(file: string): Promise<Response> {
+  const safeFile = file.replace(/[^a-zA-Z0-9.\-_]/g, "");
+  const filePath = join(REPORTS_DIR, safeFile);
 
-        console.log(`📁 File saved to temp: ${tempFilePath}`);
+  try {
+    const pdf = await Deno.readFile(filePath);
+    return new Response(pdf, {
+      headers: {
+        ...headers,
+        "Content-Type": "application/pdf",
+      },
+    });
+  } catch (_e) {
+    return new Response(JSON.stringify({ error: "Report not found" }), {
+      status: 404,
+      headers,
+    });
+  }
+}
 
-        // Run analyzer
-        const { extractedText, result, usedOCR, pdf_url } =
-          await analyzeLabReport(tempFilePath);
+// -----------------------------------------------------------------------------
+// Route: POST /analyze
+// Accepts PDF/image → runs analysis → generates PDF → returns JSON to Bubble
+// -----------------------------------------------------------------------------
+async function handleAnalyzeRequest(req: Request): Promise<Response> {
+  try {
+    // ---- Parse upload file
+    const { file, filename } = await parseMultipartForm(req);
 
-        return new Response(
-          JSON.stringify({
-            success: true,
-            extractedText,
-            result,
-            usedOCR,
-            pdf_url,     // <-- return PDF URL to Bubble
-          }),
-          { headers: { "content-type": "application/json" } },
-        );
-      } catch (err) {
-        console.error("❌ Upload handler failed:", err);
-        return new Response("Internal server error", { status: 500 });
-      }
-    }
+    // ---- Run the analysis agent
+    const result = await analysisAgent(file, filename);
 
-    // ----------------------------------------------------------
-    // DEFAULT ROOT RESPONSE
-    // ----------------------------------------------------------
-    return new Response("ClinSynapseCloud API", { status: 200 });
-  },
-  {
-    port: PORT,
-    hostname: "0.0.0.0", // REQUIRED FOR RENDER
-  },
-);
+    // result should contain:
+    // { summary, key_insights, tests, id }
+
+    // ---- Build PDF-friendly structure
+    const analysisForPdf = {
+      patient_name: result.patient_name ?? "Patient",
+      report_date: new Date().toLocaleDateString(),
+      summary: result.summary ?? "No summary available.",
+      key_insights: result.key_insights ?? [],
+      tests: result.tests ?? [],
+    };
+
+    // ---- Generate PDF + save to /reports
+    const pdfUrl = await generateReportAndSave(analysisForPdf, result.id);
+
+    // ---- Return JSON for Bubble
+    return new Response(
+      JSON.stringify({
+        success: true,
+        id: result.id,
+        summary: result.summary,
+        key_insights: result.key_insights,
+        tests: result.tests,
+        pdf_url: pdfUrl,
+      }),
+      {
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+  } catch (err) {
+    console.error("Error in /analyze:", err);
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers,
+    });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// MAIN ROUTER
+// -----------------------------------------------------------------------------
+function router(req: Request): Promise<Response> | Response {
+  const url = new URL(req.url);
+
+  // OPTIONS → for CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers });
+  }
+
+  // Serve PDF reports: GET /reports/<file>
+  if (req.method === "GET" && url.pathname.startsWith("/reports/")) {
+    const file = url.pathname.replace("/reports/", "");
+    return handleReportRequest(file);
+  }
+
+  // Analysis endpoint
+  if (req.method === "POST" && url.pathname === "/analyze") {
+    return handleAnalyzeRequest(req);
+  }
+
+  // Default 404
+  return new Response(JSON.stringify({ error: "Not found" }), {
+    status: 404,
+    headers,
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Start Server
+// -----------------------------------------------------------------------------
+console.log("🚀 ClinSynapseCloud server running on port 8000");
+serve(router, { port: 8000 });
+
 
 
 
