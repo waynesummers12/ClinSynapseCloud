@@ -149,8 +149,12 @@ function router(req: Request): Promise<Response> | Response {
 // -----------------------------------------------------------------------------
 // Start Server
 // -----------------------------------------------------------------------------
-console.log("🚀 ClinSynapseCloud server running on port 8000");
-serve(router, { port: 8000 });
+const port = Number(Deno.env.get("PORT") ?? 8000);
+
+console.log(`🚀 ClinSynapseCloud server running on port ${port}`);
+
+serve(router, { port });
+
 
 
 
