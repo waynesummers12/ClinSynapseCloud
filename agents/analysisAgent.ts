@@ -717,39 +717,34 @@ Return STRICT JSON only in this shape:
 //  • Returns JSON only (id, summary, key_insights, tests)
 // ============================================================
 
-export async function analysisAgent(
-  fileBytes: Uint8Array,
-  filename: string,
-): Promise<{
-  id: string;
-  summary: string;
-  key_insights: any[];
-  tests: any[];
-}> {
-  console.log("🧠 ClinSynapseCloud Analyzer Starting (EdenAI + Dictionary)…");
+export async function analysisAgent(fileBytes: Uint8Array, filename: string) {
+  console.log("🧠 Starting analysisAgent with uploaded file...");
 
-  // 1) Save the uploaded file temporarily so EdenAI can read it
+  // 1. Save uploaded file to /tmp
   const tempPath = `/tmp/${crypto.randomUUID()}-${filename}`;
   await Deno.writeFile(tempPath, fileBytes);
 
-  // 2) OCR via EdenAI
+  console.log(`📄 Saved uploaded file to: ${tempPath}`);
+
+  // 2. OCR → extract text
   const extractedText = await extractTextWithEdenAI(tempPath);
 
-  // 3) GPT interpretation using dictionary
+  // 3. Run the LLM interpretation
   const result = await runLLMAnalysis(extractedText);
-  const r = result as any;
 
-  // 4) Build output for the HTTP layer
   const id = crypto.randomUUID();
 
   return {
     id,
-    summary: r.summary ?? "",
-    // You can later refine what "key_insights" means; for now, reuse normalized_labs
-    key_insights: r.normalized_labs ?? [],
-    tests: r.normalized_labs ?? [],
+    extractedText,
+    summary: result.summary ?? "",
+    key_insights: result.keyInsights ?? result.key_insights ?? [],
+    tests: result.normalized_labs ?? [],
+    patient_name: result.patient_name ?? "Patient",
   };
 }
+
+
 
 
 
