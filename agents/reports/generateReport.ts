@@ -6,14 +6,20 @@
 // - Gradient risk bar for every test
 // ============================================================================
 
-import pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js";
-import pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+// ============================================================================
+// generateReport.ts (v2)
+// ============================================================================
 
-(pdfMake as any).vfs = pdfFonts.pdfMake.vfs;
+// IMPORTANT: pdfmake must be imported as namespace modules
+import * as pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
+import * as pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+
+(pdfMake as any).vfs = (pdfFonts as any).vfs;
 
 import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
 const REPORTS_DIR = "./reports";
+
 
 // ---------------------------------------------------------------------------
 // Helper: color for status label text
