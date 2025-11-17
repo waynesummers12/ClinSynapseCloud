@@ -1,475 +1,466 @@
-// agents/generateReport.ts
-// ---------------------------------------------------------------------------
-// LabResultsExplained PDF generator
-// - Uses pdf-lib to create a branded multi-page PDF
-// - Cover page with logo + summary
-// - Key insights page with yellow cards
-// - Test-by-test table page(s)
-// ---------------------------------------------------------------------------
+// ============================================================================
+// generateReport.ts (v2)
+// Builds a polished, professional medical-style PDF for LabResultsExplained
+// - Medical blue theme
+// - Premium card layout
+// - Gradient risk bar for every test
+// ============================================================================
 
-import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib";
-import {
-  dirname,
-  fromFileUrl,
-  join,
-} from "https://deno.land/std@0.224.0/path/mod.ts";
+import pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js";
+import pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
 
-// ----------------------- Types ---------------------------------------------
+(pdfMake as any).vfs = pdfFonts.pdfMake.vfs;
 
-export interface LabTestResult {
-  name: string;
-  value: string | number;
-  unit?: string;
-  reference_low?: number | null;
-  reference_high?: number | null;
-  status?: "low" | "high" | "normal" | "critical" | string; // we’ll color-code this
-  interpretation?: string;
-}
+import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
-export interface LREAnalysis {
-  patient_name?: string;
-  report_date?: string; // ISO string or plain text
-  summary: string;
-  key_insights: string[]; // short bullets
-  tests: LabTestResult[];
-}
-
-// ----------------------- Config --------------------------------------------
-
-const PAGE_WIDTH = 612; // US Letter 8.5 x 11 in points
-const PAGE_HEIGHT = 792;
-
-const MARGIN_X = 50;
-const MARGIN_Y = 60;
-
-// Colors (Theme C)
-const COLORS = {
-  backgroundDark: rgb(0.06, 0.07, 0.12), // dark navy
-  pink: rgb(0.96, 0.42, 0.80),
-  pinkSoft: rgb(0.98, 0.72, 0.90),
-  textOnDark: rgb(1, 1, 1),
-  textMain: rgb(0.10, 0.12, 0.18),
-  textMuted: rgb(0.36, 0.40, 0.48),
-  yellowCard: rgb(1.0, 0.93, 0.70),
-  yellowBorder: rgb(0.98, 0.83, 0.45),
-  tableHeader: rgb(0.95, 0.96, 0.99),
-  tableStripe: rgb(0.98, 0.99, 1),
-  statusHigh: rgb(0.89, 0.26, 0.36),
-  statusLow: rgb(0.10, 0.48, 0.82),
-  statusNormal: rgb(0.26, 0.64, 0.38),
-  statusCritical: rgb(0.60, 0.00, 0.20),
-};
-
-// Where to save reports on disk
 const REPORTS_DIR = "./reports";
 
-const BASE_URL =
-  Deno.env.get("PUBLIC_BASE_URL") ?? "https://clinsynapsecloud.onrender.com";
-
-// ----------------------- Helpers -------------------------------------------
-
-function statusColor(status?: string) {
-  if (!status) return COLORS.statusNormal;
-  const s = status.toLowerCase();
-  if (s.includes("critical")) return COLORS.statusCritical;
-  if (s.includes("high")) return COLORS.statusHigh;
-  if (s.includes("low")) return COLORS.statusLow;
-  if (s.includes("normal")) return COLORS.statusNormal;
-  return COLORS.statusNormal;
+// ---------------------------------------------------------------------------
+// Helper: color for status label text
+// ---------------------------------------------------------------------------
+function statusColor(status: string) {
+  switch (status) {
+    case "normal":
+      return "#43A047"; // green
+    case "borderline_high":
+    case "borderline_low":
+      return "#FB8C00"; // orange
+    case "high":
+    case "low":
+      return "#E53935"; // red
+    default:
+      return "#000000";
+  }
 }
 
-// Safe text wrap for simple paragraphs
-function drawWrappedText(options: {
-  page: any;
-  text: string;
-  x: number;
-  y: number;
-  maxWidth: number;
-  lineHeight: number;
-  font: any;
-  fontSize: number;
-}) {
-  const { page, text, x, maxWidth, lineHeight, font, fontSize } = options;
-  let { y } = options;
-
-  const words = text.split(/\s+/);
-  let line = "";
-
-  for (const word of words) {
-    const testLine = line ? `${line} ${word}` : word;
-    const width = font.widthOfTextAtSize(testLine, fontSize);
-    if (width > maxWidth && line) {
-      page.drawText(line, { x, y, size: fontSize, font, color: COLORS.textMain });
-      line = word;
-      y -= lineHeight;
-    } else {
-      line = testLine;
-    }
+// ---------------------------------------------------------------------------
+// Helper: marker position on gradient bar based on status
+// Returns a fraction from 0 to 1 (0 = far left, 1 = far right)
+// ---------------------------------------------------------------------------
+function markerPositionFromStatus(status: string): number {
+  switch (status) {
+    case "low":
+      return 0.1;
+    case "borderline_low":
+      return 0.25;
+    case "normal":
+      return 0.45;
+    case "borderline_high":
+      return 0.7;
+    case "high":
+      return 0.9;
+    default:
+      return 0.5;
   }
-  if (line) {
-    page.drawText(line, { x, y, size: fontSize, font, color: COLORS.textMain });
-    y -= lineHeight;
-  }
-  return y;
 }
 
-// Resolve path to logo in /assets
-async function loadLogoBytes(): Promise<Uint8Array> {
-  const here = dirname(fromFileUrl(import.meta.url));
-  const logoPath = join(here, "..", "assets", "Lab Results Explained AI Logo.png");
-  return await Deno.readFile(logoPath);
-}
+// ---------------------------------------------------------------------------
+// Helper: gradient risk bar canvas for a given status
+// ---------------------------------------------------------------------------
+function buildGradientBarCanvas(status: string) {
+  const totalWidth = 220;
+  const barHeight = 10;
+  const xStart = 0;
 
-// ----------------------- Core PDF Builder ----------------------------------
+  const markerFrac = markerPositionFromStatus(status);
+  const markerX = xStart + markerFrac * totalWidth;
 
-export async function buildLREPdf(analysis: LREAnalysis): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.create();
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  // -------- Cover Page ------------------------------------------------------
-  const cover = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-
-  // dark background
-  cover.drawRectangle({
-    x: 0,
-    y: 0,
-    width: PAGE_WIDTH,
-    height: PAGE_HEIGHT,
-    color: COLORS.backgroundDark,
-  });
-
-  // Logo
-  try {
-    const logoBytes = await loadLogoBytes();
-    const logoImage = await pdfDoc.embedPng(logoBytes);
-    const logoWidth = 260;
-    const logoHeight = (logoImage.height / logoImage.width) * logoWidth;
-    cover.drawImage(logoImage, {
-      x: (PAGE_WIDTH - logoWidth) / 2,
-      y: PAGE_HEIGHT - logoHeight - 120,
-      width: logoWidth,
-      height: logoHeight,
-    });
-  } catch (_e) {
-    // If logo fails to load, just skip – PDF still renders
-  }
-
-  // Title text
-  cover.drawText("Your Personalized Lab Report", {
-    x: MARGIN_X,
-    y: PAGE_HEIGHT - 320,
-    size: 24,
-    font: fontBold,
-    color: COLORS.textOnDark,
-  });
-
-  const patientLine = analysis.patient_name
-    ? `For: ${analysis.patient_name}`
-    : "For: Patient";
-  cover.drawText(patientLine, {
-    x: MARGIN_X,
-    y: PAGE_HEIGHT - 350,
-    size: 14,
-    font: fontRegular,
-    color: COLORS.textOnDark,
-  });
-
-  const dateLine = analysis.report_date
-    ? `Report date: ${analysis.report_date}`
-    : "";
-  if (dateLine) {
-    cover.drawText(dateLine, {
-      x: MARGIN_X,
-      y: PAGE_HEIGHT - 370,
-      size: 12,
-      font: fontRegular,
-      color: COLORS.textOnDark,
-    });
-  }
-
-  // Summary box
-  cover.drawRectangle({
-    x: MARGIN_X,
-    y: PAGE_HEIGHT - 520,
-    width: PAGE_WIDTH - MARGIN_X * 2,
-    height: 120,
-    color: COLORS.textOnDark,
-    opacity: 0.12,
-    borderColor: COLORS.pinkSoft,
-    borderWidth: 1,
-  });
-
-  let summaryY = PAGE_HEIGHT - 440;
-  summaryY = drawWrappedText({
-    page: cover,
-    text: analysis.summary,
-    x: MARGIN_X + 16,
-    y: summaryY,
-    maxWidth: PAGE_WIDTH - MARGIN_X * 2 - 32,
-    lineHeight: 16,
-    font: fontRegular,
-    fontSize: 11,
-  });
-
-  cover.drawText("This report is for informational purposes only and is not a diagnosis.", {
-    x: MARGIN_X,
-    y: 80,
-    size: 8,
-    font: fontRegular,
-    color: COLORS.textOnDark,
-  });
-
-  // -------- Key Insights Page ----------------------------------------------
-  const insightsPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-
-  insightsPage.drawText("Key Insights", {
-    x: MARGIN_X,
-    y: PAGE_HEIGHT - MARGIN_Y,
-    size: 20,
-    font: fontBold,
-    color: COLORS.textMain,
-  });
-
-  insightsPage.drawText("Top findings and patterns detected from your lab results:", {
-    x: MARGIN_X,
-    y: PAGE_HEIGHT - MARGIN_Y - 22,
-    size: 11,
-    font: fontRegular,
-    color: COLORS.textMuted,
-  });
-
-  let y = PAGE_HEIGHT - MARGIN_Y - 60;
-
-  const insights = analysis.key_insights && analysis.key_insights.length
-    ? analysis.key_insights
-    : ["No major concerns detected. Continue regular follow-up with your clinician."];
-
-  const cardHeight = 70;
-  const cardGap = 12;
-
-  insights.forEach((insight, index) => {
-    if (y - cardHeight < 70) {
-      // new page if we run out of space
-      y = PAGE_HEIGHT - MARGIN_Y;
-    }
-
-    insightsPage.drawRectangle({
-      x: MARGIN_X,
-      y: y - cardHeight,
-      width: PAGE_WIDTH - MARGIN_X * 2,
-      height: cardHeight,
-      color: COLORS.yellowCard,
-      borderColor: COLORS.yellowBorder,
-      borderWidth: 1,
-      opacity: 1,
-    });
-
-    const label =
-      index === 0
-        ? "Most important insight"
-        : index === 1
-        ? "Pattern to watch"
-        : "Additional insight";
-
-    insightsPage.drawText(label, {
-      x: MARGIN_X + 14,
-      y: y - 16,
-      size: 9,
-      font: fontBold,
-      color: COLORS.textMuted,
-    });
-
-    drawWrappedText({
-      page: insightsPage,
-      text: insight,
-      x: MARGIN_X + 14,
-      y: y - 32,
-      maxWidth: PAGE_WIDTH - MARGIN_X * 2 - 24,
-      lineHeight: 13,
-      font: fontRegular,
-      fontSize: 11,
-    });
-
-    y -= cardHeight + cardGap;
-  });
-
-  // -------- Test Table Page(s) ---------------------------------------------
-  let tablePage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let tableY = PAGE_HEIGHT - MARGIN_Y;
-
-  function drawTableHeader() {
-    tablePage.drawText("Detailed Results", {
-      x: MARGIN_X,
-      y: tableY,
-      size: 18,
-      font: fontBold,
-      color: COLORS.textMain,
-    });
-
-    tableY -= 26;
-
-    tablePage.drawText(
-      "Each value is compared to typical reference ranges. Always discuss results with your clinician.",
+  return {
+    stack: [
       {
-        x: MARGIN_X,
-        y: tableY,
-        size: 9,
-        font: fontRegular,
-        color: COLORS.textMuted,
+        canvas: [
+          // Green segment
+          {
+            type: "rect",
+            x: xStart,
+            y: 0,
+            w: totalWidth / 3,
+            h: barHeight,
+            color: "#43A047",
+          },
+          // Yellow/Orange segment
+          {
+            type: "rect",
+            x: xStart + totalWidth / 3,
+            y: 0,
+            w: totalWidth / 3,
+            h: barHeight,
+            color: "#FB8C00",
+          },
+          // Red segment
+          {
+            type: "rect",
+            x: xStart + (2 * totalWidth) / 3,
+            y: 0,
+            w: totalWidth / 3,
+            h: barHeight,
+            color: "#E53935",
+          },
+          // Marker line
+          {
+            type: "line",
+            x1: markerX,
+            y1: -3,
+            x2: markerX,
+            y2: barHeight + 3,
+            lineWidth: 2,
+            lineColor: "#000000",
+          },
+          // Border around bar
+          {
+            type: "rect",
+            x: xStart,
+            y: 0,
+            w: totalWidth,
+            h: barHeight,
+            lineWidth: 0.5,
+            lineColor: "#263238",
+          },
+        ],
+        margin: [0, 2, 0, 2],
       },
-    );
-
-    tableY -= 20;
-
-    // header background
-    tablePage.drawRectangle({
-      x: MARGIN_X,
-      y: tableY - 18,
-      width: PAGE_WIDTH - MARGIN_X * 2,
-      height: 18,
-      color: COLORS.tableHeader,
-    });
-
-    const cols = [MARGIN_X + 8, MARGIN_X + 170, MARGIN_X + 260, MARGIN_X + 360, MARGIN_X + 470];
-
-    const headers = ["Test", "Your value", "Ref. range", "Status", "Notes"];
-    headers.forEach((h, i) => {
-      tablePage.drawText(h, {
-        x: cols[i],
-        y: tableY - 6,
-        size: 9,
-        font: fontBold,
-        color: COLORS.textMain,
-      });
-    });
-
-    tableY -= 26;
-  }
-
-  const cols = [MARGIN_X + 8, MARGIN_X + 170, MARGIN_X + 260, MARGIN_X + 360, MARGIN_X + 470];
-  drawTableHeader();
-
-  const tests = analysis.tests ?? [];
-  for (const test of tests) {
-    if (tableY < 80) {
-      // new page if we run out of space
-      tablePage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      tableY = PAGE_HEIGHT - MARGIN_Y;
-      drawTableHeader();
-    }
-
-    const stripe = tests.indexOf(test) % 2 === 0;
-    if (stripe) {
-      tablePage.drawRectangle({
-        x: MARGIN_X,
-        y: tableY - 18,
-        width: PAGE_WIDTH - MARGIN_X * 2,
-        height: 18,
-        color: COLORS.tableStripe,
-      });
-    }
-
-    const range =
-      test.reference_low != null && test.reference_high != null
-        ? `${test.reference_low} – ${test.reference_high}${test.unit ? " " + test.unit : ""}`
-        : "-";
-
-    const valueText = `${test.value}${test.unit ? " " + test.unit : ""}`;
-
-    tablePage.drawText(test.name ?? "-", {
-      x: cols[0],
-      y: tableY - 6,
-      size: 9,
-      font: fontRegular,
-      color: COLORS.textMain,
-    });
-
-    tablePage.drawText(valueText, {
-      x: cols[1],
-      y: tableY - 6,
-      size: 9,
-      font: fontRegular,
-      color: COLORS.textMain,
-    });
-
-    tablePage.drawText(range, {
-      x: cols[2],
-      y: tableY - 6,
-      size: 9,
-      font: fontRegular,
-      color: COLORS.textMain,
-    });
-
-    // status as a colored chip
-    const status = test.status ?? "normal";
-    const chipColor = statusColor(status);
-    const chipWidth = 60;
-    const chipHeight = 12;
-
-    tablePage.drawRectangle({
-      x: cols[3],
-      y: tableY - 14,
-      width: chipWidth,
-      height: chipHeight,
-      color: chipColor,
-      opacity: 0.18,
-      borderColor: chipColor,
-      borderWidth: 0.5,
-    });
-
-    tablePage.drawText(status.toUpperCase(), {
-      x: cols[3] + 4,
-      y: tableY - 6,
-      size: 8,
-      font: fontBold,
-      color: chipColor,
-    });
-
-    if (test.interpretation) {
-      const maxNoteWidth = PAGE_WIDTH - cols[4] - 8;
-      const textWidth = fontRegular.widthOfTextAtSize(
-        test.interpretation,
-        8,
-      );
-      const truncated =
-        textWidth > maxNoteWidth
-          ? test.interpretation.slice(0, 40) + "…"
-          : test.interpretation;
-
-      tablePage.drawText(truncated, {
-        x: cols[4],
-        y: tableY - 6,
-        size: 8,
-        font: fontRegular,
-        color: COLORS.textMuted,
-      });
-    }
-
-    tableY -= 20;
-  }
-
-  return await pdfDoc.save();
+      {
+        columns: [
+          { text: "Low", fontSize: 8, color: "#555555" },
+          { text: "Normal", fontSize: 8, alignment: "center", color: "#555555" },
+          { text: "High", fontSize: 8, alignment: "right", color: "#555555" },
+        ],
+      },
+    ],
+  };
 }
 
-// ----------------------- Save + URL Helper ---------------------------------
+// ---------------------------------------------------------------------------
+// Helper: logo as Base64 (optional, safe if missing)
+// ---------------------------------------------------------------------------
+async function loadLogo(): Promise<string> {
+  try {
+    const data = await Deno.readFile(
+      "./assets/Lab Results Explained AI Logo.png",
+    );
+    const base64 = btoa(String.fromCharCode(...data));
+    return `data:image/png;base64,${base64}`;
+  } catch {
+    return ""; // Fallback: no logo
+  }
+}
+
+// ============================================================================
+// MAIN FUNCTION
+// ============================================================================
 
 export async function generateReportAndSave(
-  analysis: LREAnalysis,
+  analysis: {
+    patient_name: string;
+    report_date: string;
+    summary: string;
+    key_insights: string[];
+    tests: Array<{
+      name: string;
+      category?: string;
+      value: string | number;
+      units?: string;
+      ref_range?: string;
+      status: string;
+      comment?: string;
+    }>;
+  },
   id: string,
 ): Promise<string> {
-  const pdfBytes = await buildLREPdf(analysis);
-
   await Deno.mkdir(REPORTS_DIR, { recursive: true });
+  const logo = await loadLogo();
 
-  const filename = `lre-report-${id}.pdf`;
-  const filepath = join(REPORTS_DIR, filename);
+  // ---------------------------
+  // Key Insights list
+  // ---------------------------
+  const insightList =
+    analysis.key_insights && analysis.key_insights.length > 0
+      ? analysis.key_insights.map((txt) => ({
+          text: "• " + txt,
+          margin: [0, 2, 0, 2],
+          fontSize: 11,
+        }))
+      : [
+          {
+            text:
+              "No major issues detected. All values appear within typical reference ranges.",
+            margin: [0, 2, 0, 2],
+            fontSize: 11,
+          },
+        ];
 
-  await Deno.writeFile(filepath, pdfBytes);
+  // ---------------------------
+  // Build table rows (text details only)
+  // ---------------------------
+  const detailRows: any[] = [];
+  for (const t of analysis.tests) {
+    detailRows.push([
+      { text: t.name, fontSize: 11 },
+      { text: String(t.value) + (t.units ? ` ${t.units}` : ""), fontSize: 11 },
+      { text: t.ref_range ?? "-", fontSize: 11 },
+      {
+        text: t.status || "-",
+        color: statusColor(t.status),
+        bold: true,
+        fontSize: 11,
+      },
+      { text: t.comment ?? "-", fontSize: 10 },
+    ]);
 
-  // This assumes your server exposes /reports as static files.
-  // e.g., GET /reports/lre-report-123.pdf
-  return `${BASE_URL}/reports/${filename}`;
+    // Row with gradient bar below the test row
+    detailRows.push([
+      {
+        colSpan: 5,
+        margin: [0, 0, 0, 6],
+        stack: [
+          {
+            text: "Position in risk range",
+            fontSize: 8,
+            color: "#666666",
+            margin: [0, 0, 0, 2],
+          },
+          buildGradientBarCanvas(t.status),
+        ],
+      },
+      {},
+      {},
+      {},
+      {},
+    ]);
+  }
+
+  // ---------------------------
+  // PDF Document Definition
+  // ---------------------------
+  const docDefinition: any = {
+    pageSize: "A4",
+    pageMargins: [40, 60, 40, 60],
+
+    content: [
+      // HEADER
+      {
+        columns: [
+          logo
+            ? {
+                image: logo,
+                width: 120,
+              }
+            : {
+                text: "LabResultsExplained",
+                fontSize: 22,
+                bold: true,
+                color: "#1E88E5",
+              },
+          {
+            stack: [
+              {
+                text: "Lab Results Explained — AI Report",
+                fontSize: 18,
+                bold: true,
+                alignment: "right",
+                color: "#0D47A1",
+              },
+              {
+                text: `Report Date: ${analysis.report_date}`,
+                alignment: "right",
+                fontSize: 10,
+                color: "#555555",
+              },
+              {
+                text: `Patient: ${analysis.patient_name}`,
+                alignment: "right",
+                fontSize: 10,
+                color: "#555555",
+              },
+            ],
+          },
+        ],
+        margin: [0, 0, 0, 16],
+      },
+
+      { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1 }] },
+      { text: "", margin: [0, 10] },
+
+      // SUMMARY CARD
+      {
+        text: "Summary",
+        style: "sectionHeader",
+        margin: [0, 0, 0, 4],
+      },
+      {
+        table: {
+          widths: ["*"],
+          body: [
+            [
+              {
+                stack: [
+                  {
+                    text: "🧠 High-level Overview",
+                    bold: true,
+                    fontSize: 12,
+                    margin: [0, 0, 0, 4],
+                    color: "#0D47A1",
+                  },
+                  {
+                    text: analysis.summary || "No summary available.",
+                    fontSize: 11,
+                    margin: [0, 2, 0, 0],
+                    color: "#263238",
+                  },
+                ],
+                fillColor: "#F4F6F9",
+                margin: [10, 8, 10, 10],
+              },
+            ],
+          ],
+        },
+        layout: "noBorders",
+        margin: [0, 2, 0, 16],
+      },
+
+      // KEY INSIGHTS
+      {
+        text: "Key Insights",
+        style: "sectionHeader",
+        margin: [0, 0, 0, 4],
+      },
+      {
+        table: {
+          widths: ["*"],
+          body: [
+            [
+              {
+                stack: [
+                  {
+                    text: "⭐ What stands out in your labs",
+                    bold: true,
+                    fontSize: 12,
+                    margin: [0, 0, 0, 4],
+                    color: "#0D47A1",
+                  },
+                  ...insightList,
+                ],
+                fillColor: "#FFFFFF",
+                margin: [10, 8, 10, 8],
+              },
+            ],
+          ],
+        },
+        layout: {
+          hLineColor: () => "#E0E0E0",
+          vLineWidth: () => 0,
+          hLineWidth: (i: number, node: any) => (i === 0 || i === node.table.body.length ? 0 : 0.5),
+        },
+        margin: [0, 0, 0, 16],
+      },
+
+      // DETAILED RESULTS
+      {
+        text: "Detailed Lab Results",
+        style: "sectionHeader",
+        margin: [0, 0, 0, 8],
+      },
+
+      {
+        table: {
+          headerRows: 1,
+          widths: ["*", "auto", "auto", "auto", "*"],
+          body: [
+            [
+              { text: "Test", bold: true, fontSize: 11 },
+              { text: "Value", bold: true, fontSize: 11 },
+              { text: "Ref Range", bold: true, fontSize: 11 },
+              { text: "Status", bold: true, fontSize: 11 },
+              { text: "Notes", bold: true, fontSize: 11 },
+            ],
+            ...detailRows,
+          ],
+        },
+        layout: {
+          fillColor: (rowIndex: number) =>
+            rowIndex === 0 ? "#E3F2FD" : rowIndex % 2 === 0 ? "#FAFAFA" : null,
+          hLineColor: () => "#E0E0E0",
+          vLineColor: () => "#E0E0E0",
+        },
+        margin: [0, 0, 0, 20],
+      },
+
+      // DISCLAIMER
+      {
+        text: "Important Information",
+        style: "sectionHeader",
+        margin: [0, 0, 0, 4],
+      },
+      {
+        text:
+          "This report is generated by AI to help you better understand your lab results. " +
+          "It is for educational and informational purposes only and is not a substitute " +
+          "for professional medical advice, diagnosis, or treatment. Always consult your " +
+          "healthcare provider with questions about your results.",
+        fontSize: 9,
+        color: "#555555",
+      },
+    ],
+
+    // FOOTER WITH PAGE NUMBER + URL
+    footer: (currentPage: number, pageCount: number) => {
+      return {
+        columns: [
+          {
+            text:
+              "LabResultsExplained — For informational use only. Not medical advice.",
+            alignment: "left",
+            fontSize: 8,
+            color: "#777777",
+          },
+          {
+            text: `Page ${currentPage} of ${pageCount}`,
+            alignment: "center",
+            fontSize: 8,
+            color: "#777777",
+          },
+          {
+            text: "www.labresultsexplained.us",
+            alignment: "right",
+            fontSize: 8,
+            color: "#1E88E5",
+          },
+        ],
+        margin: [40, 0, 40, 20],
+      };
+    },
+
+    styles: {
+      sectionHeader: {
+        fontSize: 15,
+        bold: true,
+        color: "#1E88E5",
+      },
+    },
+  };
+
+  // ---------------------------
+  // Generate PDF
+  // ---------------------------
+  const pdf = (pdfMake as any).createPdf(docDefinition);
+  const pdfBytes: Uint8Array = await new Promise((resolve) =>
+    pdf.getBuffer((buffer: ArrayBuffer) => resolve(new Uint8Array(buffer))),
+  );
+
+  const fileName = `lre-report-${id}.pdf`;
+  const pdfPath = join(REPORTS_DIR, fileName);
+
+  await Deno.writeFile(pdfPath, pdfBytes);
+
+  console.log(`📄 PDF report saved: ${pdfPath}`);
+
+  // Public URL for Bubble
+  const baseUrl = Deno.env.get("PUBLIC_BASE_URL") ??
+    "https://clinsynapsecloud.onrender.com";
+
+  return `${baseUrl}/reports/${fileName}`;
 }
+
+
 
 
