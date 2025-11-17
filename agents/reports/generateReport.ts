@@ -55,7 +55,7 @@ export async function generateLabReportPDF(
 
   // Logo
 const logoBytes = await Deno.readFile(
-  new URL("../../assets/lre-logo.png", import.meta.url),
+  new URL("../../../assets/lre-logo.png", import.meta.url),
 );
   const logoImage = await pdfDoc.embedPng(logoBytes);
   const logoScale = 0.4;
