@@ -4,23 +4,19 @@
 // Does NOT save any file — only returns a simple success message
 // ======================================================================
 
-import * as pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
-import * as pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+import pdfMake from "https://deno.land/x/pdfmake@0.2.7/build/pdfmake.js";
+import vfsFonts from "https://deno.land/x/pdfmake@0.2.7/build/vfs_fonts.js";
 
-(pdfMake as any).vfs = (pdfFonts as any).vfs;
+pdfMake.vfs = vfsFonts.pdfMake.vfs;
 
 export async function healthCheck() {
   try {
-    // Try building a tiny PDF in memory (no saving to disk)
     const docDefinition = {
-      content: [
-        { text: "LabResultsExplained — PDF Engine OK", fontSize: 14 }
-      ]
+      content: [{ text: "LabResultsExplained — PDF Engine OK", fontSize: 14 }],
     };
 
-    const pdf = (pdfMake as any).createPdf(docDefinition);
+    const pdf = pdfMake.createPdf(docDefinition);
 
-    // This will throw if fonts/pdf engine are not working
     await new Promise((resolve) =>
       pdf.getBuffer((buffer: ArrayBuffer) => resolve(buffer))
     );
@@ -30,7 +26,6 @@ export async function healthCheck() {
       pdf_engine: "ready",
       timestamp: new Date().toISOString(),
     };
-
   } catch (err) {
     return {
       status: "error",
@@ -39,3 +34,4 @@ export async function healthCheck() {
     };
   }
 }
+

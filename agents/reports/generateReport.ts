@@ -11,10 +11,11 @@
 // ============================================================================
 
 // IMPORTANT: pdfmake must be imported as namespace modules
-import * as pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
-import * as pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+import pdfMake from "https://deno.land/x/pdfmake@0.2.7/build/pdfmake.js";
+import vfsFonts from "https://deno.land/x/pdfmake@0.2.7/build/vfs_fonts.js";
 
-(pdfMake as any).vfs = (pdfFonts as any).vfs;
+pdfMake.vfs = vfsFonts.pdfMake.vfs;
+
 
 import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
