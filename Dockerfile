@@ -4,20 +4,21 @@ FROM denoland/deno:1.46.0
 # Set working directory
 WORKDIR /app
 
-# Copy everything into /app
+# Copy project files
 COPY . .
 
-# Create reports folder for generated PDFs
+# Create output folder for generated PDFs
 RUN mkdir -p /app/reports
 
-# Cache dependencies
-RUN deno cache server/http.ts
+# Cache dependencies (point to your real entry file)
+RUN deno cache main.ts
 
-# Expose port (informational)
+# Expose port 8000 (Render will map automatically)
 EXPOSE 8000
 
-# Run server with correct permissions
-CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write=/tmp,/app/reports", "server/http.ts"]
+# Start your API server
+CMD ["run", "--allow-env", "--allow-net", "--allow-read", "--allow-write=/app/reports,/tmp", "main.ts"]
+
 
 
 
