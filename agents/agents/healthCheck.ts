@@ -4,10 +4,10 @@
 // Does NOT save any file — only returns a simple success message
 // ======================================================================
 
-import pdfMake from "https://deno.land/x/pdfmake@0.2.7/build/pdfmake.js";
-import vfsFonts from "https://deno.land/x/pdfmake@0.2.7/build/vfs_fonts.js";
+import pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
+import vfsFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
 
-pdfMake.vfs = vfsFonts.pdfMake.vfs;
+(pdfMake as any).vfs = (vfsFonts as any).vfs;
 
 export async function healthCheck() {
   try {

@@ -10,12 +10,12 @@
 // generateReport.ts (v2)
 // ============================================================================
 
-// IMPORTANT: pdfmake must be imported as namespace modules
-import pdfMake from "https://deno.land/x/pdfmake@0.2.7/build/pdfmake.js";
-import vfsFonts from "https://deno.land/x/pdfmake@0.2.7/build/vfs_fonts.js";
+// Correct working imports for Deno + Render
+import pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
+import vfsFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
 
-pdfMake.vfs = vfsFonts.pdfMake.vfs;
-
+// Attach virtual file system fonts
+(pdfMake as any).vfs = (vfsFonts as any).vfs;
 
 import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
