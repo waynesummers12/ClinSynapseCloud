@@ -23,28 +23,46 @@ router.get("/health/pdf", async (ctx) => {
 // POST /analyze  (multipart file upload)
 // ---------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
-  const body = ctx.request.body({ type: "form-data" });
-  const form = await body.value.read();
-  const file = form.files?.[0];
+  try {
+    const form = await ctx.request.formData();
 
-  if (!file) {
-    ctx.response.status = 400;
-    ctx.response.body = { success: false, error: "No file uploaded" };
-    return;
+    const file = form.get("file") as File | null;
+
+    if (!file) {
+      ctx.response.status = 400;
+      ctx.response.body = {
+        success: false,
+        error: "No file uploaded",
+      };
+      return;
+    }
+
+    // Convert to byte array
+    const bytes = new Uint8Array(await file.arrayBuffer());
+
+    // Run your AI agent (update this to accept bytes instead of file object)
+    const analysis = await analysisAgent(bytes);
+
+    // Generate PDF
+    const pdfUrl = await generateReportAndSave(analysis, analysis.id);
+
+    ctx.response.status = 200;
+    ctx.response.body = {
+      success: true,
+      ...analysis,
+      pdf_url: pdfUrl,
+    };
+  } catch (err) {
+    console.error("Error in /analyze:", err);
+    ctx.response.status = 500;
+    ctx.response.body = {
+      success: false,
+      error: "Internal server error",
+      details: err.message,
+    };
   }
-
-  // Run AI agent
-  const analysis = await analysisAgent(file);
-
-  // Create PDF
-  const pdfUrl = await generateReportAndSave(analysis, analysis.id);
-
-  ctx.response.body = {
-    success: true,
-    ...analysis,
-    pdf_url: pdfUrl,
-  };
 });
+
 
 // ---------------------------------------------------------------------------
 // STATIC FILES — Serve generated PDFs under /reports

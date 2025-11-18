@@ -594,18 +594,15 @@ const LAB_DICTIONARY_FOR_PROMPT = LAB_ENTRIES.map((e) => ({
 // -------------------------------------------------------------
 // OCR using EdenAI (supports any PDF format)
 // -------------------------------------------------------------
-async function extractTextWithEdenAI(filePath: string): Promise<string> {
-  const pdfBytes = await Deno.readFile(filePath);
-
+async function extractTextWithEdenAIFromBytes(bytes: Uint8Array): Promise<string> {
   const form = new FormData();
 
-  // Single primary provider
   form.append("providers", "google");
-  // Optional fallbacks
   form.append("fallback_providers", "microsoft");
   form.append("fallback_providers", "amazon");
 
-  form.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "lab.pdf");
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  form.append("file", blob, "upload.pdf");
 
   const res = await fetch("https://api.edenai.run/v2/ocr/ocr", {
     method: "POST",
@@ -614,9 +611,8 @@ async function extractTextWithEdenAI(filePath: string): Promise<string> {
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    console.error("❌ EdenAI OCR error:", err);
-    throw new Error("EdenAI OCR failed");
+    console.error(await res.text());
+    throw new Error("EdenAI OCR request failed");
   }
 
   const data = await res.json();
@@ -718,29 +714,18 @@ Return STRICT JSON only in this shape:
 //  • Normalizes output for PDF + Bubble
 // ============================================================
 
-export async function analysisAgent(file: any) {
-  console.log("🧠 Starting analysisAgent with uploaded file...");
+export async function analysisAgent(bytes: Uint8Array) {
+  console.log("🧠 analysisAgent starting with raw bytes…");
 
-  if (!file?.tempfile) {
-    throw new Error("Uploaded file missing tempfile path");
-  }
+  // 1. OCR directly from bytes
+  const extractedText = await extractTextWithEdenAIFromBytes(bytes);
 
-  // 1. Save to /tmp for EdenAI OCR
-  const tempPath = `/tmp/${crypto.randomUUID()}-${file.filename}`;
-  await Deno.copyFile(file.tempfile, tempPath);
-
-  console.log(`📄 Saved uploaded file to: ${tempPath}`);
-
-  // 2. Extract text with EdenAI
-  const extractedText = await extractTextWithEdenAI(tempPath);
-
-  // 3. Run GPT interpretation
+  // 2. Run GPT interpretation
   const result = await runLLMAnalysis(extractedText);
 
-  // Normalize output fields
+  // 3. Normalize output
   const id = crypto.randomUUID();
 
-  // Use recommendations as “key insights”
   const key_insights =
     result.key_insights ??
     result.keyInsights ??
