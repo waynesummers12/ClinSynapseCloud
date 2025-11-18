@@ -24,28 +24,25 @@ router.get("/health/pdf", async (ctx) => {
 // ---------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
   try {
-    // OLD OAK MULTIPART API (compatible with your version)
-    const body = await ctx.request.body({ type: "form-data" });
-    const form = await body.value.read();
+    // Oak v7 — must use ctx.request.body({ type: "form" })
+    const body = ctx.request.body({ type: "form" });
+    const formData = await body.value;
 
-    const uploaded = form.files?.[0];
+    const uploadedFile = formData.files?.file; // key matches Bubble "file"
 
-    if (!uploaded) {
+    if (!uploadedFile) {
       ctx.response.status = 400;
-      ctx.response.body = {
-        success: false,
-        error: "No file uploaded",
-      };
+      ctx.response.body = { success: false, error: "No file uploaded" };
       return;
     }
 
-    // Read the file bytes from the temporary upload path
-    const bytes = await Deno.readFile(uploaded.filename);
+    // Read the file bytes
+    const bytes = await Deno.readFile(uploadedFile.path);
 
-    // Run your AI agent
+    // Run AI agent
     const analysis = await analysisAgent(bytes);
 
-    // Generate PDF
+    // Create PDF
     const pdfUrl = await generateReportAndSave(analysis, analysis.id);
 
     ctx.response.status = 200;
@@ -64,6 +61,7 @@ router.post("/analyze", async (ctx) => {
     };
   }
 });
+
 
 
 
