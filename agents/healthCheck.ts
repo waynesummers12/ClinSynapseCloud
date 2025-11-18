@@ -4,10 +4,10 @@
 // Does NOT save any file — only returns a simple success message
 // ======================================================================
 
-import * as pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
-import * as pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+import pdfMake from "https://cdn.skypack.dev/pdfmake@0.2.7/build/pdfmake.js";
+import pdfFonts from "https://cdn.skypack.dev/pdfmake@0.2.7/build/vfs_fonts.js";
 
-(pdfMake as any).vfs = (pdfFonts as any).vfs;
+(pdfMake as any).vfs = (pdfFonts as any).pdfMake.vfs;
 
 export async function healthCheck() {
   try {
@@ -34,4 +34,5 @@ export async function healthCheck() {
     };
   }
 }
+
 

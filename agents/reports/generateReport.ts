@@ -11,11 +11,12 @@
 // ============================================================================
 
 // Correct working imports for Deno + Render
-import * as pdfMake from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.js";
-import * as pdfFonts from "https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js";
+import pdfMake from "https://cdn.skypack.dev/pdfmake@0.2.7/build/pdfmake.js";
+import pdfFonts from "https://cdn.skypack.dev/pdfmake@0.2.7/build/vfs_fonts.js";
+
 
 // Attach virtual file system fonts
-(pdfMake as any).vfs = (pdfFonts as any).vfs;
+(pdfMake as any).vfs = (pdfFonts as any).pdfMake.vfs;
 
 
 import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
