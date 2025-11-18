@@ -24,20 +24,20 @@ router.get("/health/pdf", async (ctx) => {
 // ---------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
   try {
-    // Oak v7 — must use ctx.request.body({ type: "form" })
-    const body = ctx.request.body({ type: "form" });
-    const formData = await body.value;
+    // Web API request object (Oak v17)
+    const req = ctx.request.originalRequest;
 
-    const uploadedFile = formData.files?.file; // key matches Bubble "file"
+    const formData = await req.formData();
+    const file = formData.get("file");
 
-    if (!uploadedFile) {
+    if (!file || !(file instanceof File)) {
       ctx.response.status = 400;
       ctx.response.body = { success: false, error: "No file uploaded" };
       return;
     }
 
-    // Read the file bytes
-    const bytes = await Deno.readFile(uploadedFile.path);
+    // Convert to bytes
+    const bytes = new Uint8Array(await file.arrayBuffer());
 
     // Run AI agent
     const analysis = await analysisAgent(bytes);
@@ -52,7 +52,8 @@ router.post("/analyze", async (ctx) => {
       pdf_url: pdfUrl,
     };
   } catch (err) {
-    console.error("Error in /analyze:", err);
+    console.error("ERROR in /analyze:", err);
+
     ctx.response.status = 500;
     ctx.response.body = {
       success: false,
@@ -61,6 +62,7 @@ router.post("/analyze", async (ctx) => {
     };
   }
 });
+
 
 
 
