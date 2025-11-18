@@ -2,7 +2,7 @@
 // main.ts — Web Server for ClinSynapseCloud + LabResultsExplained
 // ============================================================================
 
-import { Application, Router, send } from "https://deno.land/x/oak/mod.ts";
+import { Application, Router, send } from "https://deno.land/x/oak@v11.1.0/mod.ts";
 import { analysisAgent } from "./agents/analysisAgent.ts";
 import { generateReportAndSave } from "./agents/reports/generateReport.ts";
 import { healthCheck } from "./agents/healthCheck.ts";
@@ -24,44 +24,39 @@ router.get("/health/pdf", async (ctx) => {
 // ---------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
   try {
-    // Web API request object (Oak v17)
-    const req = ctx.request.originalRequest;
+    const body = ctx.request.body({ type: "form-data" });
+    const form = await body.value.read();
 
-    const formData = await req.formData();
-    const file = formData.get("file");
+    const uploaded = form.files?.[0];
 
-    if (!file || !(file instanceof File)) {
+    if (!uploaded) {
       ctx.response.status = 400;
-      ctx.response.body = { success: false, error: "No file uploaded" };
+      ctx.response.body = { success: false, error: "No file received" };
       return;
     }
 
-    // Convert to bytes
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bytes = await Deno.readFile(uploaded.filename);
 
-    // Run AI agent
     const analysis = await analysisAgent(bytes);
 
-    // Create PDF
     const pdfUrl = await generateReportAndSave(analysis, analysis.id);
 
-    ctx.response.status = 200;
     ctx.response.body = {
       success: true,
       ...analysis,
-      pdf_url: pdfUrl,
+      pdf_url: pdfUrl
     };
   } catch (err) {
-    console.error("ERROR in /analyze:", err);
-
+    console.error("ERROR:", err);
     ctx.response.status = 500;
     ctx.response.body = {
       success: false,
       error: "Internal server error",
-      details: err.message,
+      details: err.message
     };
   }
 });
+
 
 
 
