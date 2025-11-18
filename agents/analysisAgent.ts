@@ -712,37 +712,55 @@ Return STRICT JSON only in this shape:
 }
 
 // ============================================================
-// MAIN ANALYZER – exported function used by server/http.ts
-//  • NO PDF GENERATION HERE
-//  • Returns JSON only (id, summary, key_insights, tests)
+// MAIN ANALYZER – exported function used by main.ts
+//  • Accepts the FormData uploaded file
+//  • Performs OCR + LLM classification
+//  • Normalizes output for PDF + Bubble
 // ============================================================
 
-export async function analysisAgent(fileBytes: Uint8Array, filename: string) {
+export async function analysisAgent(file: any) {
   console.log("🧠 Starting analysisAgent with uploaded file...");
 
-  // 1. Save uploaded file to /tmp
-  const tempPath = `/tmp/${crypto.randomUUID()}-${filename}`;
-  await Deno.writeFile(tempPath, fileBytes);
+  if (!file?.tempfile) {
+    throw new Error("Uploaded file missing tempfile path");
+  }
+
+  // 1. Save to /tmp for EdenAI OCR
+  const tempPath = `/tmp/${crypto.randomUUID()}-${file.filename}`;
+  await Deno.copyFile(file.tempfile, tempPath);
 
   console.log(`📄 Saved uploaded file to: ${tempPath}`);
 
-  // 2. OCR → extract text
+  // 2. Extract text with EdenAI
   const extractedText = await extractTextWithEdenAI(tempPath);
 
-  // 3. Run the LLM interpretation
+  // 3. Run GPT interpretation
   const result = await runLLMAnalysis(extractedText);
 
+  // Normalize output fields
   const id = crypto.randomUUID();
+
+  // Use recommendations as “key insights”
+  const key_insights =
+    result.key_insights ??
+    result.keyInsights ??
+    result.recommendations ??
+    [];
 
   return {
     id,
     extractedText,
     summary: result.summary ?? "",
-    key_insights: result.keyInsights ?? result.key_insights ?? [],
+    key_insights,
     tests: result.normalized_labs ?? [],
     patient_name: result.patient_name ?? "Patient",
+    overall_pattern: result.overall_pattern ?? "",
+    cautions: result.cautions ?? [],
+    report_date: new Date().toISOString().split("T")[0],
   };
 }
+
+
 
 
 
