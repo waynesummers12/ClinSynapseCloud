@@ -24,11 +24,13 @@ router.get("/health/pdf", async (ctx) => {
 // ---------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
   try {
-    const form = await ctx.request.formData();
+    // OLD OAK MULTIPART API (compatible with your version)
+    const body = await ctx.request.body({ type: "form-data" });
+    const form = await body.value.read();
 
-    const file = form.get("file") as File | null;
+    const uploaded = form.files?.[0];
 
-    if (!file) {
+    if (!uploaded) {
       ctx.response.status = 400;
       ctx.response.body = {
         success: false,
@@ -37,10 +39,10 @@ router.post("/analyze", async (ctx) => {
       return;
     }
 
-    // Convert to byte array
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Read the file bytes from the temporary upload path
+    const bytes = await Deno.readFile(uploaded.filename);
 
-    // Run your AI agent (update this to accept bytes instead of file object)
+    // Run your AI agent
     const analysis = await analysisAgent(bytes);
 
     // Generate PDF
@@ -62,6 +64,7 @@ router.post("/analyze", async (ctx) => {
     };
   }
 });
+
 
 
 // ---------------------------------------------------------------------------
