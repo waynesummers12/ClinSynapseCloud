@@ -6,6 +6,8 @@
 // - Returns a single friendly, safe reply
 // ======================================================================
 
+import { getAnalysisByDocId } from "../data/analysisStore.ts";
+
 export interface LabTest {
   name: string;
   category?: string;
@@ -135,10 +137,22 @@ async function callOpenAIChat(messages: { role: string; content: string }[]): Pr
 }
 
 // Main exported function
-export async function runClinSynapseChat(
-  input: ClinSynapseChatInput,
-): Promise<string> {
-  const { message, analysis, history = [] } = input;
+export async function runClinSynapseChat({
+  doc_id,
+  message,
+  history = []
+}: {
+  doc_id: string;
+  message: string;
+  history?: ChatMessage[];
+}): Promise<string> {
+
+
+  // Load the stored analysis
+  const analysis = await getAnalysisByDocId(doc_id);
+  if (!analysis) {
+    throw new Error(`No stored analysis found for doc_id=${doc_id}`);
+  }
 
   const systemPrompt = buildSystemPrompt();
   const contextBlock = buildContextBlock(analysis);
