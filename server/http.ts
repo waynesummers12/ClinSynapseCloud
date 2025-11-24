@@ -109,7 +109,7 @@ function router(req: Request): Promise<Response> | Response {
     return new Response("ok", { headers });
   }
 
-  // Serve reports
+  // Serve PDF reports
   if (req.method === "GET" && url.pathname.startsWith("/reports/")) {
     const file = url.pathname.replace("/reports/", "");
     return handleReportRequest(file);
@@ -132,5 +132,5 @@ function router(req: Request): Promise<Response> | Response {
   });
 }
 
-export { router };
+export default router;
 
