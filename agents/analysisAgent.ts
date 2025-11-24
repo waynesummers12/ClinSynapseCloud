@@ -1,12 +1,14 @@
 // agents/analysisAgent.ts
 // ============================================================
 //  ClinSynapseCloud – Lab Report Analyzer
-//  OCR: EdenAI  +  Interpretation: OpenAI (GPT-4o-mini)
+//  OCR: EdenAI + Interpretation: OpenAI (GPT-4o-mini)
 //  + Built-in lab normalization dictionary with typical ranges
+//  + Persists analysis so /chat can retrieve it later
 // ============================================================
 
 import "jsr:@std/dotenv/load";
 import OpenAI from "https://deno.land/x/openai@v4.24.1/mod.ts";
+import { saveAnalysis } from "../data/analysisStore.ts";   // ✅ REQUIRED
 
 const EDENAI_API_KEY = Deno.env.get("EDENAI_API_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
@@ -15,14 +17,14 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 // Lab Dictionary Types
 // ------------------------------------------------------------
 type LabEntry = {
-  key: string;            // canonical lowercase key
-  canonicalName: string;  // display name
-  aliases: string[];      // all the messy ways labs write it
-  category: string;       // panel / system
+  key: string;
+  canonicalName: string;
+  aliases: string[];
+  category: string;
   typicalUnits?: string;
-  refLow?: number;        // typical adult range (approximate)
+  refLow?: number;
   refHigh?: number;
-  refText?: string;       // when numeric range is not enough / sex-specific
+  refText?: string;
 };
 
 // ------------------------------------------------------------
@@ -592,11 +594,10 @@ const LAB_DICTIONARY_FOR_PROMPT = LAB_ENTRIES.map((e) => ({
 }));
 
 // -------------------------------------------------------------
-// OCR using EdenAI (supports any PDF format)
+// OCR via EdenAI
 // -------------------------------------------------------------
 async function extractTextWithEdenAIFromBytes(bytes: Uint8Array): Promise<string> {
   const form = new FormData();
-
   form.append("providers", "google");
   form.append("fallback_providers", "microsoft");
   form.append("fallback_providers", "amazon");
@@ -625,64 +626,28 @@ async function extractTextWithEdenAIFromBytes(bytes: Uint8Array): Promise<string
   return merged.trim();
 }
 
-// ============================================================
-// GPT-4o-mini Interpretation using Dictionary + Ranges
-// ============================================================
-
+// -------------------------------------------------------------
+// Run GPT-4o-mini with your dictionary
+// -------------------------------------------------------------
 async function runLLMAnalysis(text: string): Promise<any> {
   const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  const dictJson = JSON.stringify(LAB_DICTIONARY_FOR_PROMPT);
-
   const prompt = `
-You are a clinical laboratory interpretation system.
+You are a clinical lab interpreter. Normalize test names, assign status
+(low/normal/high), estimate units, and return STRICT JSON ONLY using the dictionary:
 
-You are given:
-1) A lab report as free text (possibly messy OCR).
-2) A JSON lab dictionary describing canonical names, aliases, categories,
-   and typical adult reference ranges.
+Dictionary:
+${JSON.stringify(LAB_DICTIONARY_FOR_PROMPT)}
 
-Your job:
-- Normalize lab test names using the dictionary.
-- Infer the most likely units if missing, using the dictionary.
-- Determine if each value is LOW, NORMAL, or HIGH against typical ranges.
-- Be explicit when reference ranges are sex/age dependent or lab-dependent.
-- Then generate a clear, friendly explanation for a layperson.
-
-IMPORTANT:
-- When in doubt, clearly say "range varies by lab / population".
-- DO NOT give diagnosis. Focus on patterns, risk, and follow-up suggestions.
-- ALWAYS return STRICT JSON ONLY.
-
-Lab dictionary (JSON):
-${dictJson}
-
-Lab report text:
+Lab report:
 ${text}
 
-Return STRICT JSON only in this shape:
-
-{
-  "normalized_labs": [
-    {
-      "name": "Hemoglobin A1c",
-      "category": "Diabetes / Glycemic Control",
-      "value": 5.9,
-      "units": "%",
-      "status": "borderline_high", // one of: low, normal, high, borderline_high, unclear
-      "ref_range": "< 5.7% typical non-diabetic",
-      "comment": "Short comment about what this means"
-    }
-  ],
-  "summary": "High-level narrative summary for the patient.",
-  "overall_pattern": "e.g., Prediabetes pattern, possible metabolic syndrome, etc.",
-  "recommendations": [
-    "1–2 sentence actionable suggestions (lifestyle, questions to ask clinician, and when to seek urgent care)."
-  ],
-  "cautions": [
-    "Important disclaimers and 'this is not a diagnosis' language."
-  ]
-}
+Return JSON with:
+- normalized_labs[]
+- summary
+- overall_pattern
+- recommendations[]
+- cautions[]
 `;
 
   const completion = await client.chat.completions.create({
@@ -695,35 +660,29 @@ Return STRICT JSON only in this shape:
   try {
     return JSON.parse(content);
   } catch (err) {
-    console.error("❌ JSON parse failed, returning raw content:", err);
+    console.error("❌ JSON parse failed:", err);
     return {
       summary: content,
       normalized_labs: [],
       recommendations: [],
-      cautions: [
-        "Model returned non-JSON content; parsing failed. Upstream logic should handle this gracefully.",
-      ],
+      cautions: ["Model returned non-JSON output."],
     };
   }
 }
 
-// ============================================================
-// MAIN ANALYZER – exported function used by main.ts
-//  • Accepts the FormData uploaded file
-//  • Performs OCR + LLM classification
-//  • Normalizes output for PDF + Bubble
-// ============================================================
-
+// -------------------------------------------------------------
+// MAIN ANALYZER — used by /analyze
+// -------------------------------------------------------------
 export async function analysisAgent(bytes: Uint8Array) {
-  console.log("🧠 analysisAgent starting with raw bytes…");
+  console.log("🧠 analysisAgent starting…");
 
-  // 1. OCR directly from bytes
+  // 1) OCR
   const extractedText = await extractTextWithEdenAIFromBytes(bytes);
 
-  // 2. Run GPT interpretation
+  // 2) GPT interpretation
   const result = await runLLMAnalysis(extractedText);
 
-  // 3. Normalize output
+  // 3) Build final object
   const id = crypto.randomUUID();
 
   const key_insights =
@@ -732,7 +691,7 @@ export async function analysisAgent(bytes: Uint8Array) {
     result.recommendations ??
     [];
 
-  return {
+  const analysis = {
     id,
     extractedText,
     summary: result.summary ?? "",
@@ -743,7 +702,14 @@ export async function analysisAgent(bytes: Uint8Array) {
     cautions: result.cautions ?? [],
     report_date: new Date().toISOString().split("T")[0],
   };
+
+  // 4) SAVE ANALYSIS (⭐ critical for /chat)
+  await saveAnalysis(id, analysis);
+
+  // 5) Return to Bubble + PDF generator
+  return analysis;
 }
+
 
 
 
