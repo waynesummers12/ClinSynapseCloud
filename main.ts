@@ -1,18 +1,18 @@
 // ============================================================================
-// main.ts — Entry point Web Server for ClinSynapseCloud
+// main.ts — Entry point for ClinSynapseCloud (Oak server)
 // ============================================================================
 
 import { Application } from "https://deno.land/x/oak@v11.1.0/mod.ts";
-import router from "./server/http.ts";   // <<— default import
+import router from "./server/http.ts";
 
 const app = new Application();
 
-// Attach router (with /chat, /analyze, /reports, etc.)
 app.use(router.routes());
 app.use(router.allowedMethods());
 
 const PORT = Number(Deno.env.get("PORT") ?? 8000);
-console.log(`🚀 ClinSynapseCloud server running on port ${PORT}`);
+console.log(`🚀 ClinSynapseCloud running on port ${PORT}`);
 
 await app.listen({ port: PORT });
+
 
