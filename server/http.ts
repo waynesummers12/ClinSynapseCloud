@@ -14,7 +14,7 @@ const REPORTS_DIR = "./reports";
 const router = new Router();
 
 // -----------------------------------------------------------------------------
-// CORS (Bubble requires this)
+// CORS for Bubble
 // -----------------------------------------------------------------------------
 router.options("/(.*)", (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
@@ -24,7 +24,7 @@ router.options("/(.*)", (ctx) => {
 });
 
 // -----------------------------------------------------------------------------
-// GET /reports/:file
+// GET /reports/:file — serve PDFs
 // -----------------------------------------------------------------------------
 router.get("/reports/:file", async (ctx) => {
   const safe = ctx.params.file.replace(/[^a-zA-Z0-9.\-_]/g, "");
@@ -41,13 +41,12 @@ router.get("/reports/:file", async (ctx) => {
 });
 
 // -----------------------------------------------------------------------------
-// POST /analyze (multipart file API for LRE)
+// POST /analyze (multipart file upload from Bubble)
 // -----------------------------------------------------------------------------
 router.post("/analyze", async (ctx) => {
   try {
     const body = ctx.request.body({ type: "form-data" });
     const form = await body.value.read();
-
     const uploaded = form.files?.[0];
 
     if (!uploaded) {
@@ -58,7 +57,6 @@ router.post("/analyze", async (ctx) => {
 
     const bytes = await Deno.readFile(uploaded.filename);
 
-    // IMPORTANT: include filename
     const result = await analysisAgent(bytes, uploaded.filename);
 
     const pdfUrl = await generateReportAndSave(result, result.id);
@@ -76,7 +74,7 @@ router.post("/analyze", async (ctx) => {
 });
 
 // -----------------------------------------------------------------------------
-// POST /chat (Bubble JSON API)
+// POST /chat (JSON POST from Bubble)
 // -----------------------------------------------------------------------------
 router.post("/chat", async (ctx) => {
   const json = await ctx.request.body.json();
@@ -94,5 +92,4 @@ router.post("/chat", async (ctx) => {
   ctx.response.body = await response.text();
 });
 
-// -----------------------------------------------------------------------------
 export default router;
