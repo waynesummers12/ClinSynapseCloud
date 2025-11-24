@@ -9,23 +9,36 @@ import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 import { handleChatRequest } from "./chatRoute.ts";
 import { analysisAgent } from "../agents/analysisAgent.ts";
 import { generateReportAndSave } from "../agents/reports/generateReport.ts";
+import { healthCheck } from "../agents/healthCheck.ts";
 
 const REPORTS_DIR = "./reports";
 const router = new Router();
 
-// -----------------------------------------------------------------------------
-// CORS for Bubble
-// -----------------------------------------------------------------------------
+// ============================================================================
+// CORS — required for Bubble
+// ============================================================================
 router.options("/(.*)", (ctx) => {
   ctx.response.headers.set("Access-Control-Allow-Origin", "*");
   ctx.response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  ctx.response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  ctx.response.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
   ctx.response.status = 200;
 });
 
-// -----------------------------------------------------------------------------
-// GET /reports/:file — serve PDFs
-// -----------------------------------------------------------------------------
+// ============================================================================
+// GET /health — optional PDF engine test
+// ============================================================================
+router.get("/health", async (ctx) => {
+  const result = await healthCheck();
+  ctx.response.headers.set("Content-Type", "application/json");
+  ctx.response.body = result;
+});
+
+// ============================================================================
+// GET /reports/:file  → serve saved PDF files
+// ============================================================================
 router.get("/reports/:file", async (ctx) => {
   const safe = ctx.params.file.replace(/[^a-zA-Z0-9.\-_]/g, "");
   const path = join(REPORTS_DIR, safe);
@@ -40,9 +53,9 @@ router.get("/reports/:file", async (ctx) => {
   }
 });
 
-// -----------------------------------------------------------------------------
-// POST /analyze (multipart file upload from Bubble)
-// -----------------------------------------------------------------------------
+// ============================================================================
+// POST /analyze  → multipart form-data upload from Bubble
+// ============================================================================
 router.post("/analyze", async (ctx) => {
   try {
     const body = ctx.request.body({ type: "form-data" });
@@ -73,23 +86,33 @@ router.post("/analyze", async (ctx) => {
   }
 });
 
-// -----------------------------------------------------------------------------
-// POST /chat (JSON POST from Bubble)
-// -----------------------------------------------------------------------------
+// ============================================================================
+// POST /chat  → plain JSON chat messages from Bubble
+// ============================================================================
 router.post("/chat", async (ctx) => {
-  const json = await ctx.request.body.json();
+  let json;
+  try {
+    json = await ctx.request.body.json();
+  } catch {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Invalid JSON" };
+    return;
+  }
 
-  const req = new Request(ctx.request.url, {
+  const proxyReq = new Request(ctx.request.url, {
     method: "POST",
     headers: ctx.request.headers,
     body: JSON.stringify(json),
   });
 
-  const response = await handleChatRequest(req);
+  const upstream = await handleChatRequest(proxyReq);
 
-  ctx.response.status = response.status;
+  ctx.response.status = upstream.status;
   ctx.response.headers.set("Content-Type", "application/json");
-  ctx.response.body = await response.text();
+  ctx.response.body = await upstream.text();
 });
 
+// ============================================================================
+// EXPORT — (this is the part you said was missing)
+// ============================================================================
 export default router;
