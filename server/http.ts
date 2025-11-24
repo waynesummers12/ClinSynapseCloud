@@ -5,7 +5,7 @@
 //   POST /analyze → accepts file upload, runs analysis, generates PDF, returns JSON
 //   GET  /reports/:file → serves PDF reports
 // -----------------------------------------------------------------------------
-import { handleChatRequest } from "../server/chatRoute.ts";
+import { handleChatRequest } from "./chatRoute.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { extname, join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
