@@ -1,6 +1,14 @@
 // server/chatRoute.ts
+// ======================================================================
+// Chat handler for ClinSynapseCloud
+// - Accepts JSON from Bubble
+// - Validates doc_id + message
+// - Loads stored analysis
+// - Runs the ClinSynapse chat engine
+// ======================================================================
+
 import { runClinSynapseChat } from "../agents/clinSynapseChat.ts";
-import { loadAnalysis } from "../data/analysisStore.ts";
+import { getAnalysisByDocId } from "../data/analysisStore.ts";
 
 export async function handleChatRequest(req: Request): Promise<Response> {
   if (req.method !== "POST") {
@@ -10,7 +18,7 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     });
   }
 
-  // Parse JSON
+  // Parse JSON body safely
   let body;
   try {
     body = await req.json();
@@ -33,8 +41,8 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     );
   }
 
-  // Load previously saved analysis
-  const analysis = await loadAnalysis(doc_id);
+  // Load saved analysis
+  const analysis = await getAnalysisByDocId(doc_id);
   if (!analysis) {
     return new Response(JSON.stringify({ error: "Analysis not found" }), {
       status: 404,
@@ -43,11 +51,11 @@ export async function handleChatRequest(req: Request): Promise<Response> {
   }
 
   try {
-    // Run full ClinSynapse chat engine
+    // Run the clinical chat engine
     const reply = await runClinSynapseChat({
+      doc_id,
       message,
       history: history ?? [],
-      analysis,            // ✔ REQUIRED
     });
 
     return new Response(JSON.stringify({ reply }), {
@@ -62,6 +70,7 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     });
   }
 }
+
 
 
 
