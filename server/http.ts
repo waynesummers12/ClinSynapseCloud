@@ -90,27 +90,48 @@ router.post("/analyze", async (ctx) => {
 // POST /chat  → plain JSON chat messages from Bubble
 // ============================================================================
 router.post("/chat", async (ctx) => {
-  let json;
   try {
-    json = await ctx.request.body.json();
-  } catch {
-    ctx.response.status = 400;
-    ctx.response.body = { error: "Invalid JSON" };
-    return;
+    // Correct JSON parsing for Oak v11
+    const { doc_id, message, history } = await ctx.request.body({
+      type: "json",
+    }).value;
+
+    if (!doc_id || !message) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "Missing doc_id or message" };
+      return;
+    }
+
+    // Load analysis using your existing analysisAgent
+    const analysis =
+      await analysisAgent.getAnalysis?.(doc_id) ??
+      await analysisAgent.getById?.(doc_id);
+
+    if (!analysis) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Analysis not found" };
+      return;
+    }
+
+    // Run chat engine
+    const reply = await handleChatRequest({
+      doc_id,
+      message,
+      history: history ?? [],
+      analysis,
+    });
+
+    ctx.response.status = 200;
+    ctx.response.headers.set("Content-Type", "application/json");
+    ctx.response.body = { reply };
+
+  } catch (err) {
+    console.error("❌ Error in /chat:", err);
+    ctx.response.status = 500;
+    ctx.response.body = { error: err.message };
   }
-
-  const proxyReq = new Request(ctx.request.url, {
-    method: "POST",
-    headers: ctx.request.headers,
-    body: JSON.stringify(json),
-  });
-
-  const upstream = await handleChatRequest(proxyReq);
-
-  ctx.response.status = upstream.status;
-  ctx.response.headers.set("Content-Type", "application/json");
-  ctx.response.body = await upstream.text();
 });
+
 
 // ============================================================================
 // EXPORT — (this is the part you said was missing)
