@@ -1,4 +1,4 @@
-// chatRoute.ts
+// server/chatRoute.ts
 import { runClinSynapseChat } from "../agents/clinSynapseChat.ts";
 
 export async function handleChatRequest(req: Request): Promise<Response> {
@@ -13,26 +13,26 @@ export async function handleChatRequest(req: Request): Promise<Response> {
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  const { doc_id, message, history } = body || {};
+  const { doc_id, message, history } = body ?? {};
 
   if (!doc_id || !message) {
-    return new Response(
-      JSON.stringify({ error: "Missing doc_id or message" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: "Missing doc_id or message" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   try {
     const reply = await runClinSynapseChat({
       doc_id,
       message,
-      history: history ?? []
+      history: history ?? [],
     });
 
     return new Response(JSON.stringify({ reply }), {
@@ -41,10 +41,11 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     });
   } catch (err) {
     console.error("Chat error:", err);
-    return new Response(JSON.stringify({ error: "Chat processing failed" }), {
+    return new Response(JSON.stringify({ error: "Chat failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
 }
+
 
