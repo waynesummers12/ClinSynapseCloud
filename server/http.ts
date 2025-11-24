@@ -92,10 +92,14 @@ router.post("/analyze", async (ctx) => {
 // ============================================================================
 // POST /chat → Bubble sends JSON: { doc_id, message, history }
 // ============================================================================
+import { runClinSynapseChat } from "../agents/clinSynapseChat.ts";
+import { getAnalysisByDocId } from "../data/analysisStore.ts";
+
 router.post("/chat", async (ctx) => {
   try {
-    const body = await ctx.request.body({ type: "json" }).value;
-    const { doc_id, message, history = [] } = body ?? {};
+    const { doc_id, message, history = [] } = await ctx.request
+      .body({ type: "json" })
+      .value;
 
     if (!doc_id || !message) {
       ctx.response.status = 400;
@@ -103,18 +107,24 @@ router.post("/chat", async (ctx) => {
       return;
     }
 
-    // Let chatRoute.ts handle everything
-    const replyRes = await handleChatRequest(
-      new Request("", {
-        method: "POST",
-        body: JSON.stringify({ doc_id, message, history }),
-        headers: { "Content-Type": "application/json" },
-      })
-    );
+    // Load analysis from /tmp storage
+    const analysis = await getAnalysisByDocId(doc_id);
+    if (!analysis) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Analysis not found" };
+      return;
+    }
 
-    ctx.response.status = replyRes.status;
+    // Run chat engine
+    const reply = await runClinSynapseChat({
+      doc_id,
+      message,
+      history,
+    });
+
+    ctx.response.status = 200;
     ctx.response.headers.set("Content-Type", "application/json");
-    ctx.response.body = await replyRes.json();
+    ctx.response.body = { reply };
 
   } catch (err) {
     console.error("❌ Error in /chat:", err);
@@ -122,6 +132,7 @@ router.post("/chat", async (ctx) => {
     ctx.response.body = { error: err.message };
   }
 });
+
 
 // ============================================================================
 // EXPORT ROUTER
