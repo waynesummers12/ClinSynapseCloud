@@ -5,7 +5,7 @@
 //   POST /analyze → accepts file upload, runs analysis, generates PDF, returns JSON
 //   GET  /reports/:file → serves PDF reports
 // -----------------------------------------------------------------------------
-
+import { handleChatRequest } from "./chatRoute.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { extname, join } from "https://deno.land/std@0.224.0/path/mod.ts";
 
@@ -138,7 +138,10 @@ function router(req: Request): Promise<Response> | Response {
   if (req.method === "POST" && url.pathname === "/analyze") {
     return handleAnalyzeRequest(req);
   }
-
+// Chat endpoint
+if (req.method === "POST" && url.pathname === "/chat") {
+  return handleChatRequest(req);
+}
   // Default 404
   return new Response(JSON.stringify({ error: "Not found" }), {
     status: 404,
