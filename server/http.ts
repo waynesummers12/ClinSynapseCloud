@@ -54,7 +54,7 @@ router.get("/reports/:file", async (ctx) => {
 });
 
 // ============================================================================
-// POST /analyze  → multipart form-data upload from Bubble
+// POST /analyze → multipart form-data upload from Bubble
 // ============================================================================
 router.post("/analyze", async (ctx) => {
   try {
@@ -70,8 +70,10 @@ router.post("/analyze", async (ctx) => {
 
     const bytes = await Deno.readFile(uploaded.filename);
 
-    const result = await analysisAgent(bytes, uploaded.filename);
+    // Run analysis
+    const result = await analysisAgent(bytes);
 
+    // Generate PDF & save
     const pdfUrl = await generateReportAndSave(result, result.id);
 
     ctx.response.body = {
@@ -79,6 +81,7 @@ router.post("/analyze", async (ctx) => {
       ...result,
       pdf_url: pdfUrl,
     };
+
   } catch (err) {
     console.error("Analyze error:", err);
     ctx.response.status = 500;
@@ -87,14 +90,12 @@ router.post("/analyze", async (ctx) => {
 });
 
 // ============================================================================
-// POST /chat  → plain JSON chat messages from Bubble
+// POST /chat → Bubble sends JSON: { doc_id, message, history }
 // ============================================================================
 router.post("/chat", async (ctx) => {
   try {
-    // Correct JSON parsing for Oak v11
-    const { doc_id, message, history } = await ctx.request.body({
-      type: "json",
-    }).value;
+    const body = await ctx.request.body({ type: "json" }).value;
+    const { doc_id, message, history = [] } = body ?? {};
 
     if (!doc_id || !message) {
       ctx.response.status = 400;
@@ -102,28 +103,18 @@ router.post("/chat", async (ctx) => {
       return;
     }
 
-    // Load analysis using your existing analysisAgent
-    const analysis =
-      await analysisAgent.getAnalysis?.(doc_id) ??
-      await analysisAgent.getById?.(doc_id);
+    // Let chatRoute.ts handle everything
+    const replyRes = await handleChatRequest(
+      new Request("", {
+        method: "POST",
+        body: JSON.stringify({ doc_id, message, history }),
+        headers: { "Content-Type": "application/json" },
+      })
+    );
 
-    if (!analysis) {
-      ctx.response.status = 404;
-      ctx.response.body = { error: "Analysis not found" };
-      return;
-    }
-
-    // Run chat engine
-    const reply = await handleChatRequest({
-      doc_id,
-      message,
-      history: history ?? [],
-      analysis,
-    });
-
-    ctx.response.status = 200;
+    ctx.response.status = replyRes.status;
     ctx.response.headers.set("Content-Type", "application/json");
-    ctx.response.body = { reply };
+    ctx.response.body = await replyRes.json();
 
   } catch (err) {
     console.error("❌ Error in /chat:", err);
@@ -132,8 +123,8 @@ router.post("/chat", async (ctx) => {
   }
 });
 
-
 // ============================================================================
-// EXPORT — (this is the part you said was missing)
+// EXPORT ROUTER
 // ============================================================================
 export default router;
+
