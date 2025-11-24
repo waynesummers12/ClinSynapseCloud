@@ -1,5 +1,6 @@
 // server/chatRoute.ts
 import { runClinSynapseChat } from "../agents/clinSynapseChat.ts";
+import { loadAnalysis } from "../data/analysisStore.ts";
 
 export async function handleChatRequest(req: Request): Promise<Response> {
   if (req.method !== "POST") {
@@ -9,6 +10,7 @@ export async function handleChatRequest(req: Request): Promise<Response> {
     });
   }
 
+  // Parse JSON
   let body;
   try {
     body = await req.json();
@@ -22,17 +24,30 @@ export async function handleChatRequest(req: Request): Promise<Response> {
   const { doc_id, message, history } = body ?? {};
 
   if (!doc_id || !message) {
-    return new Response(JSON.stringify({ error: "Missing doc_id or message" }), {
-      status: 400,
+    return new Response(
+      JSON.stringify({ error: "Missing doc_id or message" }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  // Load previously saved analysis
+  const analysis = await loadAnalysis(doc_id);
+  if (!analysis) {
+    return new Response(JSON.stringify({ error: "Analysis not found" }), {
+      status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
 
   try {
+    // Run full ClinSynapse chat engine
     const reply = await runClinSynapseChat({
-      doc_id,
       message,
       history: history ?? [],
+      analysis,            // ✔ REQUIRED
     });
 
     return new Response(JSON.stringify({ reply }), {
@@ -40,12 +55,13 @@ export async function handleChatRequest(req: Request): Promise<Response> {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    console.error("Chat error:", err);
+    console.error("❌ Chat error:", err);
     return new Response(JSON.stringify({ error: "Chat failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
 }
+
 
 
