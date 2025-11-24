@@ -1,11 +1,12 @@
 // ============================================================================
 // analysisStore.ts
-// Simple JSON file–based storage for LabAnalysis objects
+// JSON storage for LabAnalysis objects — safe for Render
+// Uses /tmp which IS writeable on Render
 // ============================================================================
 
 import { ensureDir } from "https://deno.land/std@0.224.0/fs/ensure_dir.ts";
 
-const STORE_DIR = "./data/analysis";
+const STORE_DIR = "/tmp/analysis";   // ⭐ FIXED — Render allows this
 await ensureDir(STORE_DIR);
 
 // Helper: build file path
@@ -30,4 +31,5 @@ export async function getAnalysisByDocId(doc_id: string) {
     return null;
   }
 }
+
 
