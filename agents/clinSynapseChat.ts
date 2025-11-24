@@ -115,7 +115,7 @@ async function callOpenAIChat(messages: { role: string; content: string }[]): Pr
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-5.1", // or "gpt-4.1" etc., your choice
+      model: "gpt-4o", // or "gpt-4.1" etc., your choice
       messages,
       temperature: 0.3, // more conservative for medical
       max_tokens: 800,
